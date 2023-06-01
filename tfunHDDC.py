@@ -370,8 +370,96 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
         #TODO finish models
 
 
+# In R, this function doesn't return anything?
+
 def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model, 
                        threshold, method, noise_ctrl, com_dim, d_max, d_set):
     #TODO multivariate case
     #TODO FDataBasis gives coefficients in the transposed order from R. Verify
-    x = fdobj['data']
+    x = fdobj['data'].coefficients
+
+    N = x.shape[0]
+    p = x.shape[1]
+    n = np.sum(t, axis=0)
+    prop = n/N
+    #matrix with K columns and p rows
+    mu = np.repeat(None, K*p).reshape((K, p))
+    mu1 = np.repeat(None, K*p).reshape((K, p))
+
+    #This is in R code but just gets overwritten later
+    #corX = np.repeat(0, N*K).reshape((N, K))
+
+    #TODO Verify if this is matrix multiplication (better to be safe using matmul)
+    corX = np.matmul(t,tw)
+
+    for i in np.arange(0, K):
+        #Verify calculation in apply
+        mu[i] = np.apply_along_axis(sum,1,(np.matmul(corX[:,i], np.repeat(1, p)).T)*(x.T))
+        mu1[i] = np.sum(corX[:,i]*x, axis=0)/np.sum(corX[:,i])
+
+    ind = np.apply_along_axis(np.where, 0, t>0)
+    
+    n_bis = np.arange(0,K)
+    for i in np.arange(0,K):
+        #verify this is the same in R code. Should be, since [[i]] acceses the list item i
+        n_bis[i] = len(ind[f'{i}'])
+
+    match dfupdate:
+        case "approx":
+            #TODO add try/catch to this like in R
+            jk861 = _T_tyxf8(dfconstr, nux, n, t, tw, K, p, N)
+            testing = jk861
+            if np.all(np.isfinite(testing)):
+                nux = jk861
+        
+        case "numeric":
+            #TODO add try/catch to this like in R
+            jk681 = _T_tyxf7(dfconstr, nux, n, t, tw, K, p, N)
+            testing = jk681
+            if np.all(np.isfinite(testing)):
+                nux = jk861
+
+
+    traceVect = np.zeros(K)
+
+    ev = np.repeat(0, K*p).reshape((K,p))
+    #try dictionary here
+    Q = {}
+    fpcaobj = {}
+
+    for i in range(0, K):
+        donnees = _T_mypcat_fd1(fdobj, Wlist, t[:,i], corX[:,i])
+        #What is the context for the diag call in R? (ie. what data type is diag being called on)
+        traceVect[i] = sum(np.diag(donnees['valerus_propres']))
+        ev[i] = donnees['valerus_propres']
+        Q[f'{i}'] = donnees['U']
+        fpcaobj[f'{i}'] = donnees
+
+
+    if model in ["AJBQD", "ABQD"]:
+        d = np.repeat(com_dim, K)
+
+    elif model in ["AKJBKQKD", "AKBKQKD", "ABKQKD", "AKJBQKD", "AKBQKD", "ABQKD"]:
+        #rep using each=K gives the same result as np.repeat normally when repeating K times
+        dmax = np.min(np.apply_along_axis(np.argmax, 1, (ev>noise_ctrl)*np.repeat(np.arange(0, ev.shape[1]), K)))
+        if com_dim > dmax:
+            com_dim = max(dmax, 1)
+        d = np.repeat(com_dim, K)
+    else:
+        d = _T_hdclassif_dim_choice(ev, n, method, threshold, False, noise_ctrl, d_set)
+
+    Q1 = Q
+    for i in range(0, K):
+        # verify that in R, matrix(Q[[i]]... ) just constructs a matrix with same dimenstions as Q[[i]]...
+        Q[f'{i}'] = Q[f'{i}'][:,0:d[i]]
+
+    ai = np.repeat(None, K*np.max(d))
+    if model in ['AKJBKQKDK', 'AKJBQKDK', 'AKJBKQKD', 'AKJBQKD']:
+        for i in range(0, K):
+            ai[i, 0:d[i]] = ev[i, 0:d[i]]
+
+    elif model in ['AKBKQKDK', 'AKBQKDK', 'AKBKQKD', 'AKBQKD']:
+        for i in range(0, K):
+            ai[i] = np.repeat(np.sum(ev[i, 0:d[i]]/d[i]), np.max(d))
+
+    elif model == 'AJBQD':#LINE 1256
