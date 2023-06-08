@@ -56,8 +56,7 @@ class _Table:
 
 #TODO add default values
 #*args argument replaces ... in R code
-#fdobj should be a Bunch object from sklearn.utils.Bunch (or dictionary) containing
-#a FData object
+#fdobj should be a dictionary containing an FData object and optionally labels
 def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
                      itermax, threshold, method, eps, init, init_vector,
                      mini_nb, min_individuals, noise_ctrl, com_dim,
@@ -179,9 +178,7 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
                         t[np.array(np.where(init_vector == i), i)] = 1
 
                 case "kmeans":
-                    #TODO what is kmeans.control doing in R?
                     kmc = kmeans_control
-                    #kmc controls some of the initialization in R, find out what its doing
                     km = sklearn.cluster.KMeans(n_clusters = K, max_iter = itermax)
                     cluster = km.fit_predict(data)
 
@@ -343,23 +340,23 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
                     return "pop<min_individuals"
             
             #m_step1 called here
-            #m = _tfunhddt_m_step1
+            m = _T_funhddt_m_step1(fdobj, wlist, K, t, tw, nux, dfupdate, dfconstr, model, threshold, method, noise_ctrl, com_dim, d_max, d_set)
 
             nux = m['nux']
             
             #e_step1 called here
-            #to = _tfunhddt_e_step1
+            to = _T_funhddt_e_step1(fdobj, wlist, K, t, tw, nux, dfupdate, dfconstr, model, threshold, method, noise_ctrl, com_dim, d_max, d_set)
 
-            '''
+            
             L = to['L']
             t = to['t']
             tw = to['tw']
-            '''
+            
 
             #likely[I] = L in R. Is there a reason why we would need NAs?
             likely.append(L)
 
-            #I-1 and I-2 adjusted for Python indicies
+            #TODO I-1 and I-2 adjusted for Python indicies
             if(I == 2):
                 test = abs(likely[I] - likely[I-1])
             elif I > 2:
@@ -369,15 +366,69 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
             
             I += 1
 
+        #a
         if np.isin(model, np.array(["AKBKQKDK", "AKBQKDK", "AKBKQKD", "AKBQKD"])):
-            a = _Table(data = m['a'][:,1], rownames=np.array(["Ak:"], colnames=np.arange(0,m['K'])))
+            a = _Table(data = m['a'][:,0], rownames=["Ak:"], colnames=np.arange(0,m['K']))
 
-        #TODO find Python paste equivalent
-        #elif model == "AJBQD":
-            #a = _Table(data = )
+        #find Python paste equivalent
+        #Solution: for loop
+        elif model == "AJBQD":
+            colnamesA1 = []
+            for i in range(0, m['d'][0]):
+                colnamesA1.append('a' + str(i))
+            a = _Table(data = m['a'][0], rownames= ['Aj:'], colnames = colnamesA1)
+        
+        elif np.isin(model, np.array(["ABKQKDK", "ABQKDK", "ABKQKD", "ABQKD", "ABQD"])):
+            a = _Table(data = m['a'][0], rownames=['A:'], colnames=[''])
 
-        #TODO finish models
+        else:
+            colnamesA2= []
+            for i in range(0, np.max(m['d'])):
+                colnamesA2.append('a' + str(i))
+            a = _Table(data = m['a'], rownames=np.arange(0, m['K']), colnames=colnamesA2)
 
+
+        #b
+        if np.isin(model, np.array(["AKJBQKDK", "AKBQKDK", "ABQKDK", "AKJBQKD", "ABQKD", "AJBQD", "ABQD"])):
+            b = _Table(data = m['b'][0], rownames=["B:"], colnames=[''])
+        else:
+            b = _Table(data = m['b'], rownames=["Bk:"], colnames=np.arange(0, m['K']))
+
+        d = _Table(m['d'], rownames=["dim:"], colnames=np.arange(0, m['K']))
+
+        colnamesmu = []
+        for i in range(0, p):
+            colnamesmu.append("V" + str(i))
+
+        mu = _Table(m['mu'], rownames=np.arange(0, m['K']), colnames=colnamesmu)
+
+        prop = _Table(m['prop'], rownames=[''], colnames=np.arange(0, m['K']))
+        nux = _Table(m['nux'], rownames=[''], colnames=np.arange(0, m['K']))
+
+        complexity = _T_hdc_getComplexity(m, p, dfconstr)
+        #TODO class here
+        cls = np.argmax(t, axis=0)
+
+
+        converged = test < eps
+
+        params = {'params': params, 'wlist': wlist, 'model':model, 'K':K, 'd':d,
+                  'a':a, 'b':b, 'mu':mu, 'prop':prop, 'nux':nux, 'ev': m['ev'],
+                  'Q': m['Q'], 'Q1':m['Q1'], 'fpca': m['fpcaobj'], 
+                  'loglik':likely[-1], 'loglik_all': likely, 'posterior': t,
+                  'class': cls, 'com_ev': com_ev, 'n':n, 'complexity':complexity,
+                  'threshold': threshold, 'd_select': method, 
+                  'converged': converged, "index": test_index}
+        
+        bic_icl = _T_hdclassift_bic(params, p, dfconstr)
+        params['BIC'] = bic_icl["bic"]
+        params["ICL"] = bic_icl['icl']
+
+        #TODO class here
+
+        return params
+        
+        
 
 # In R, this function doesn't return anything?
 
@@ -509,7 +560,7 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
     #TODO Verify if this is matrix multiplication (better to be safe using matmul)
     corX = t*tw
 
-    for i in np.arange(0, K):
+    for i in range(0, K):
         #Verify calculation in apply
         mu[i] = np.apply_along_axis(sum,1,(np.matmul(corX[:,i], np.repeat(1, p)).T)*(x.T))/np.sum(corX[:,i])
         mu1[i] = np.sum(corX[:,i]*x, axis=0)/np.sum(corX[:,i])
@@ -517,7 +568,7 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
     ind = np.apply_along_axis(np.where, 0, t>0)
     
     n_bis = np.arange(0,K)
-    for i in np.arange(0,K):
+    for i in range(0,K):
         #verify this is the same in R code. Should be, since [[i]] acceses the list item i
         n_bis[i] = len(ind[f'{i}'])
 
