@@ -1,31 +1,27 @@
-import skfda
-import sklearn
-from sklearn.utils import Bunch
 import numpy as np
-import warnings
 import pandas as pd
 import math
-import ctypes
-from pathlib import *
-import os
 
 def _T_funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
 
    #try this if fdobj is an fdata (Univariate only right now)
-    if(type(fdobj) == skfda.FDataBasis or type(fdobj == skfda.FDataGrid)):
-        x = fdobj.coefficients
+    #if(type(fdobj) == skfda.FDataBasis or type(fdobj == skfda.FDataGrid)):
+    #    x = fdobj.coefficients
 
     #For R testing if fdobj gets passed as a dict
     #Should also work for dataframe (converts to pandas dataframe)
-    if type(fdobj) == dict:
+    #Will be changed outside of R testing so that the expected element in the
+    #dict or dataframs is an FDataBasis
+    if type(fdobj) == dict or type(fdobj) == pd.DataFrame:
         #Multivariate
+        #Here in R, the first element will be named '1'
         if len(x.keys() > 1):
-            x = fdobj[0].coefficients
+            x = np.transpose(fdobj['1']['coefficients'])
             for i in range(0, len(fdobj)):
-                x = np.c_[x, fdobj[f'{i}'].coefficients]
+                x = np.c_[x, np.transpose(fdobj[f'{i}']['coefficients'])]
         #univariate
         else:
-            x = fdobj.coeficients
+            x = fdobj['coefficients'].T
 
 
 
@@ -68,7 +64,6 @@ def _T_funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
 
         tw[:, i] = (nux[i]+p)/(nux[i] + mah_pen[:,i])
 
-        #Verify this doesn't break order of operations
         K_pen[:,i] = np.log(prop[i]) + math.lgamma((nux[i] + p)/2) - (1/2) * \
         (s[i] + (p-d[i])*np.log(b[i]) - np.log(dety)) - ((p/2) * (np.log(np.pi)\
         + np.log(nux[i])) + math.lgamma(nux[i]/2) + ((nux[i] + p)/2) * \
@@ -127,3 +122,6 @@ def _T_imahalanobis(x, muk, wk, Qk, aki):
 
     return res
 
+#so_file = "./t-funHDDC/src/TFunHDDC.so"
+#c_lib = ctypes.CDLL(so_file)
+#print(type(c_lib))
