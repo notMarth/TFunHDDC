@@ -5,6 +5,9 @@ from sklearn.utils import Bunch
 import numpy as np
 import warnings
 import pandas as pd
+import math
+import ctypes
+import scipy.special as scip
 #------------------------------------------------------------------------------#
 
 
@@ -54,8 +57,7 @@ class _Table:
 
 #TODO add default values
 #*args argument replaces ... in R code
-#fdobj should be a Bunch object from sklearn.utils.Bunch (or dictionary) containing
-#a FData object
+#fdobj should be a dictionary containing an FData object and optionally labels
 def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
                      itermax, threshold, method, eps, init, init_vector,
                      mini_nb, min_individuals, noise_ctrl, com_dim,
@@ -64,14 +66,21 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
                   "ABQKDK", "AKJBKQKD", "AKBKQKD", "ABKQKD", "AKJBQKD",
                   "AKBQKD", "ABQKD"]
     
-    #TODO multivariate case
-    #Fix keys[0] (should just be passing data)
-    if type(fdobj) == Bunch:
-        keys = fdobj.keys()
-        data = fdobj[keys[0]].coefficients.transpose()
+    #try this if fdobj is an fdata (Univariate only right now)
+    if(type(fdobj) == skfda.FDataBasis or type(fdobj == skfda.FDataGrid)):
+        data = fdobj.coefficients
 
-    else:
-        data =  fdobj.coefficients.transpose()
+    #For R testing if fdobj gets passed as a dict
+    #Should also work for dataframe (converts to pandas dataframe)
+    if type(fdobj) == dict:
+        #Multivariate
+        if len(data.keys() > 1):
+            data = fdobj[0].coefficients
+            for i in range(0, len(fdobj)):
+                data = np.c_[data, fdobj[f'{i}'].coefficients]
+        #univariate
+        else:
+            data = fdobj.coeficients
 
     n, p = data.shape
     #com_ev is None (better way of phrasing) instead of = None
@@ -170,9 +179,7 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
                         t[np.array(np.where(init_vector == i), i)] = 1
 
                 case "kmeans":
-                    #TODO what is kmeans.control doing in R?
                     kmc = kmeans_control
-                    #kmc controls some of the initialization in R, find out what its doing
                     km = sklearn.cluster.KMeans(n_clusters = K, max_iter = itermax)
                     cluster = km.fit_predict(data)
 
@@ -212,8 +219,8 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
                         prms = _T_funhddc_main1(fdobj=fdobj, wlist=wlist, known=known, dfstart=dfstart,
                                                 dfupdate=dfupdate, dfconstr=dfconstr, model=model,
                                                 threshold=threshold, method=method,
-                                                itermax=mini_nb=[1], init_vector=0, init="random",
-                                                mini_nb=mini.nb, min_individuals=min_individuals,
+                                                itermax=mini_nb[1], init_vector=0, init="random",
+                                                mini_nb=mini_nb, min_individuals=min_individuals,
                                                 noise_ctrl=noise_ctrl, kmeans_control=kmeans_control,
                                                 com_dim=com_dim, d_max=d_max, d_set=d_set)
                         if len(prms) != 1:
@@ -312,7 +319,7 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
         #initx = ._T_funhddt_init
         
         #call to twinit function here
-        #tw = .T_funhddt_twinit
+        tw = _T_funhddt_twinit
 
         #I indexes lists later on, should it be -1? it is 0 in R
         I = 0
@@ -334,23 +341,23 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
                     return "pop<min_individuals"
             
             #m_step1 called here
-            #m = _tfunhddt_m_step1
+            m = _T_funhddt_m_step1(fdobj, wlist, K, t, tw, nux, dfupdate, dfconstr, model, threshold, method, noise_ctrl, com_dim, d_max, d_set)
 
             nux = m['nux']
             
             #e_step1 called here
-            #to = _tfunhddt_e_step1
+            to = _T_funhddt_e_step1(fdobj, wlist, K, t, tw, nux, dfupdate, dfconstr, model, threshold, method, noise_ctrl, com_dim, d_max, d_set)
 
-            '''
+            
             L = to['L']
             t = to['t']
             tw = to['tw']
-            '''
+            
 
             #likely[I] = L in R. Is there a reason why we would need NAs?
             likely.append(L)
 
-            #I-1 and I-2 adjusted for Python indicies
+            #TODO I-1 and I-2 adjusted for Python indicies
             if(I == 2):
                 test = abs(likely[I] - likely[I-1])
             elif I > 2:
@@ -360,23 +367,231 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
             
             I += 1
 
+        #a
         if np.isin(model, np.array(["AKBKQKDK", "AKBQKDK", "AKBKQKD", "AKBQKD"])):
-            a = _Table(data = m['a'][:,1], rownames=np.array(["Ak:"], colnames=np.arange(0,m['K'])))
+            a = _Table(data = m['a'][:,0], rownames=["Ak:"], colnames=np.arange(0,m['K']))
 
-        #TODO find Python paste equivalent
-        #elif model == "AJBQD":
-            #a = _Table(data = )
+        #find Python paste equivalent
+        #Solution: for loop
+        elif model == "AJBQD":
+            colnamesA1 = []
+            for i in range(0, m['d'][0]):
+                colnamesA1.append('a' + str(i))
+            a = _Table(data = m['a'][0], rownames= ['Aj:'], colnames = colnamesA1)
+        
+        elif np.isin(model, np.array(["ABKQKDK", "ABQKDK", "ABKQKD", "ABQKD", "ABQD"])):
+            a = _Table(data = m['a'][0], rownames=['A:'], colnames=[''])
 
-        #TODO finish models
+        else:
+            colnamesA2= []
+            for i in range(0, np.max(m['d'])):
+                colnamesA2.append('a' + str(i))
+            a = _Table(data = m['a'], rownames=np.arange(0, m['K']), colnames=colnamesA2)
+
+
+        #b
+        if np.isin(model, np.array(["AKJBQKDK", "AKBQKDK", "ABQKDK", "AKJBQKD", "ABQKD", "AJBQD", "ABQD"])):
+            b = _Table(data = m['b'][0], rownames=["B:"], colnames=[''])
+        else:
+            b = _Table(data = m['b'], rownames=["Bk:"], colnames=np.arange(0, m['K']))
+
+        d = _Table(m['d'], rownames=["dim:"], colnames=np.arange(0, m['K']))
+
+        colnamesmu = []
+        for i in range(0, p):
+            colnamesmu.append("V" + str(i))
+
+        mu = _Table(m['mu'], rownames=np.arange(0, m['K']), colnames=colnamesmu)
+
+        prop = _Table(m['prop'], rownames=[''], colnames=np.arange(0, m['K']))
+        nux = _Table(m['nux'], rownames=[''], colnames=np.arange(0, m['K']))
+
+        complexity = _T_hdc_getComplexity(m, p, dfconstr)
+        #TODO class here
+        cls = np.argmax(t, axis=0)
+
+
+        converged = test < eps
+
+        params = {'params': params, 'wlist': wlist, 'model':model, 'K':K, 'd':d,
+                  'a':a, 'b':b, 'mu':mu, 'prop':prop, 'nux':nux, 'ev': m['ev'],
+                  'Q': m['Q'], 'Q1':m['Q1'], 'fpca': m['fpcaobj'], 
+                  'loglik':likely[-1], 'loglik_all': likely, 'posterior': t,
+                  'class': cls, 'com_ev': com_ev, 'n':n, 'complexity':complexity,
+                  'threshold': threshold, 'd_select': method, 
+                  'converged': converged, "index": test_index}
+        
+        bic_icl = _T_hdclassift_bic(params, p, dfconstr)
+        params['BIC'] = bic_icl["bic"]
+        params["ICL"] = bic_icl['icl']
+
+        #TODO class here
+
+        return params
+        
+        
+# Why not just pass in x instead of fdobj?
+def _T_funhddt_twinit(fdobj, wlist, par, nux):
+
+    #try this if fdobj is an fdata (Univariate only right now)
+    if(type(fdobj) == skfda.FDataBasis or type(fdobj == skfda.FDataGrid)):
+        x = fdobj.coefficients
+
+    #For R testing if fdobj gets passed as a dict
+    #Should also work for dataframe (converts to pandas dataframe)
+    if type(fdobj) == dict or type(fdobj) == pd.DataFrame:
+        #Multivariate
+        if len(x.keys() > 1):
+            x = fdobj[0].coefficients
+            for i in range(0, len(fdobj)):
+                x = np.c_[x, fdobj[f'{i}'].coefficients]
+        #univariate
+        else:
+            x = fdobj.coeficients
+
+    p = x.shape[1]
+    n = x.shape[0]
+    K = par['K']
+    a = par['a']
+    b = par['b']
+    mu = par['mu']
+    d = par['d']
+    Q = par['Q']
+    Q1 = par['Q1']
+    W = np.zeros(n*K).reshape((n,K))
+
+    b[b<1e-6]  = 1e-6
+
+    mah_pen = np.zeros(n*K).reshape((n,K))
+
+    for i in range(0, K):
+        Qk = Q1['i']
+
+        aki = np.sqrt(np.diag(np.concatenate((1/a[i, 0:d[i]],np.repeat(1/b[i], p-d[i]) ))))
+        muki = mu[i]
+
+        wki = wlist['W_m']
+        mah_pen[:,i] = _T_imahalanobis(x, muki, wki, Qk, aki)
+        W[:, i] = (nux[i] + p) / (nux[i] + mah_pen[:, i])
+
+    return W
 
 
 # In R, this function doesn't return anything?
 
+def _T_funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
+    
+    #try this if fdobj is an fdata (Univariate only right now)
+    if(type(fdobj) == skfda.FDataBasis or type(fdobj == skfda.FDataGrid)):
+        x = fdobj.coefficients
+
+    #For R testing if fdobj gets passed as a dict
+    #Should also work for dataframe (converts to pandas dataframe)
+    if type(fdobj) == dict or type(fdobj) == pd.DataFrame:
+        #Multivariate
+        if len(x.keys() > 1):
+            x = fdobj[0].coefficients
+            for i in range(0, len(fdobj)):
+                x = np.c_[x, fdobj[f'{i}'].coefficients]
+        #univariate
+        else:
+            x = fdobj.coeficients
+
+    p = x.shape[1]
+    N = x.shape[0]
+    K = par["K"]
+    nux = par["nux"]
+    a = par["a"]
+    b = par["b"]
+    mu = par["mu"]
+    d = par["d"]
+    prop = par["prop"]
+    Q = par["Q"]
+    Q1 = par["Q1"]
+    b[b<1e-6] = 1e-6
+
+    if clas > 0:
+        unkno = (kno-1)*(-1)
+
+    t = np.repeat(0, N*K).reshape(N, K)
+    tw = np.repeat(0, N*K).reshape(N, K)
+    mah_pen = np.repeat(0, N*K).reshape(N,K)
+    K_pen = np.repeat(0, N*K).reshape(N,K)
+    num = np.repeat(0, N*K).reshape(N,K)
+    ft = np.repeat(0, N*K).reshape(N,K)
+
+    s = np.repeat(0, K)
+
+    for i in range(0,K):
+        s[i] = np.sum(np.log(a[i, 0:d[i]]))
+
+        Qk = Q1[f"{i}"]
+        aki = np.sqrt(np.diag(np.concatenate((1/a[i, 0:d[i]],np.repeat(1/b[i], p-d[i]) ))))
+        muki = mu[i]
+
+        Wki = Wlist["W_m"]
+        dety = Wlist["dety"]
+
+        mah_pen[:, i] = _T_imahalanobis(x, muki, Wki, Qk, aki)
+
+        tw[:, i] = (nux[i]+p)/(nux[i] + mah_pen[:,i])
+
+        #Verify this doesn't break order of operations
+        K_pen[:,i] = np.log(prop[i]) + math.lgamma((nux[i] + p)/2) - (1/2) * \
+        (s[i] + (p-d[i])*np.log(b[i]) - np.log(dety)) - ((p/2) * (np.log(np.pi)\
+        + np.log(nux[i])) + math.lgamma(nux[i]/2) + ((nux[i] + p)/2) * \
+        (np.log(1+mah_pen[:, i] / nux[i])))
+
+    ft = np.exp(K_pen)
+    ft_den = np.sum(ft, axis=1)
+    kcon = - np.apply_along_axis(np.max, 1, K_pen)
+    K_pen = K_pen + kcon
+    num = np.exp(K_pen)
+    t = num / np.sum(num, axis=1)
+
+    L1 = np.sum(np.log(ft_den))
+    L = np.sum(np.log(np.sum(np.exp(K_pen), axis=1)) - kcon)
+
+    #Why assign these if they get reassigned immediately?
+    #trow = N
+    #tcol = K
+    trow = np.sum(t, axis=1)
+    tcol = np.sum(t, axis=0)
+
+    if(np.any(tcol<p)):
+        t = (t + 0.0000001) / (trow + (K*0.0000001))
+
+    if (clas > 0):
+        t = unkno*t
+
+        for i in range(0,N):
+            if (kno[i] == 1):
+                t[i, known[i]] = 1
+
+    #Nothing is returned here
+
+    #{t: t, tw: tw, L: L}
+
+
+
 def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model, 
                        threshold, method, noise_ctrl, com_dim, d_max, d_set):
-    #TODO multivariate case
-    #TODO FDataBasis gives coefficients in the transposed order from R. Verify
-    x = fdobj['data'].coefficients
+    
+    #try this if fdobj is an fdata (Univariate only right now)
+    if(type(fdobj) == skfda.FDataBasis or type(fdobj == skfda.FDataGrid)):
+        x = fdobj.coefficients
+
+    #For R testing if fdobj gets passed as a dict
+    #Should also work for dataframe (converts to pandas dataframe)
+    if type(fdobj) == dict:
+        #Multivariate
+        if len(x.keys() > 1):
+            x = fdobj[0].coefficients
+            for i in range(0, len(fdobj)):
+                x = np.c_[x, fdobj[f'{i}'].coefficients]
+        #univariate
+        else:
+            x = fdobj.coeficients
 
     N = x.shape[0]
     p = x.shape[1]
@@ -390,17 +605,17 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
     #corX = np.repeat(0, N*K).reshape((N, K))
 
     #TODO Verify if this is matrix multiplication (better to be safe using matmul)
-    corX = np.matmul(t,tw)
+    corX = t*tw
 
-    for i in np.arange(0, K):
+    for i in range(0, K):
         #Verify calculation in apply
-        mu[i] = np.apply_along_axis(sum,1,(np.matmul(corX[:,i], np.repeat(1, p)).T)*(x.T))
+        mu[i] = np.apply_along_axis(sum,1,(np.matmul(corX[:,i], np.repeat(1, p)).T)*(x.T))/np.sum(corX[:,i])
         mu1[i] = np.sum(corX[:,i]*x, axis=0)/np.sum(corX[:,i])
 
     ind = np.apply_along_axis(np.where, 0, t>0)
     
     n_bis = np.arange(0,K)
-    for i in np.arange(0,K):
+    for i in range(0,K):
         #verify this is the same in R code. Should be, since [[i]] acceses the list item i
         n_bis[i] = len(ind[f'{i}'])
 
@@ -463,3 +678,100 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
             ai[i] = np.repeat(np.sum(ev[i, 0:d[i]]/d[i]), np.max(d))
 
     elif model == 'AJBQD':#LINE 1256
+        print("notdone")
+
+
+#degrees of freedom functions modified yxf7 and yxf8 functions
+# /*
+# * Authors: Andrews, J. Wickins, J. Boers, N. McNicholas, P.
+# * Date Taken: 2023-01-01
+# * Original Source: teigen (modified)
+# * Address: https://github.com/cran/teigen
+# *
+# */
+def _T_tyxf7(dfconstr, nux, n, t, tw, K, p, N):
+    if dfconstr == "no":
+        dfoldg = nux
+
+        #scipy digamma is slow? https://gist.github.com/timvieira/656d9c74ac5f82f596921aa20ecb6cc8
+        for i in range(0, K):
+            constn = 1 + (1/n[i]) * np.sum(t[:, i] * (np.log(tw[:, i]) - tw[:, i])) + scip.digamma((dfoldg[i] + p)/2) - np.log((dfoldg[i] + p)/2)
+
+            #UNIROOT HERE (Try Brent method in scipy?)
+
+            if nux[i] > 200:
+                nux[i] = 200
+
+            if nux[i] < 2:
+                nux[i] = 2
+
+    else:
+        dfoldg = nux[0]
+        constn = 1 + (1/N) * np.sum(t *(np.log(tw) - tw)) + scip.digamma( (dfoldg + p) / 2) - np.log( (dfoldg + p) / 2)
+
+        #UNIROOT HERE
+
+        if dfsamenewg > 200:
+            dfsamenewg = 200
+        
+        if dfsamenewg < 2:
+            dfsamenewg = 2
+
+        nux = np.repeat(dfsamenewg, K)
+
+    return nux
+
+def _T_tyxf8(dfconstr, nux, n, t, tw, K, p, N):
+    if(dfconstr == "no"):
+        dfoldg = nux
+        
+        for i in range(0, K):
+            constn = 1 + (1 / n[i]) * np.sum(t[:, i] * np.log(tw[:, i] - tw[:, i])) + scip.digamma((dfoldg[i] + p)/2) - np.log( (dfoldg[i] + p)/2)
+
+            constn = -constn
+            nux[i] = (-np.exp(constn) + 2 * (np.exp(constn)) * (np.exp(scip.digamma(dfoldg[i] / 2)) - ( (dfoldg[i]/2) - (1/2)))) / (1 - np.exp(constn))
+
+            if nux[i] > 200:
+                nux[i] = 200
+
+            if nux[i] < 2:
+                nux[i] = 2
+
+    else:
+        dfoldg = nux[0]
+        constn = 1 + (1 / n[i]) * np.sum(t[:, i] * np.log(tw[:, i] - tw[:, i])) + scip.digamma((dfoldg[i] + p)/2) - np.log( (dfoldg[i] + p)/2)
+        constn = -constn
+
+        dfsamenewg = (-np.exp(constn) + 2 * (np.exp(constn)) * (np.exp(scip.digamma(dfoldg[i] / 2)) - ( (dfoldg[i]/2) - (1/2)))) / (1 - np.exp(constn))
+
+        if dfsamenewg > 200:
+            dfsamenewg = 200
+
+        if dfsamenewg < 2:
+            dfsamenewg = 2
+
+        nyx = np.repeat(dfsamenewg, K)
+
+    return nux
+
+def _T_imahalanobis(x, muk, wk, Qk, aki):
+    
+    #C code not working for now, try compiling dll on current machine?
+    #so_file = "./src/TFunHDDC.so"
+    #c_lib = ctypes.CDLL(so_file)
+    #print(type(c_lib.imahalanobis()))
+
+    p = x.shape[1]
+    N = x.shape[0]
+    
+    X = x - muk
+
+    Qi = np.matmul(wk, Qk)
+
+    xQu = np.matmul(X, Qi)
+
+    proj = np.matmul(np.matmul(X, Qi), aki)
+
+    res = np.sum(proj ** 2, axis=1)
+
+    return res

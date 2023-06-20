@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import math
+import csv
 
 def _T_funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
 
@@ -15,7 +16,7 @@ def _T_funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
     if type(fdobj) == dict or type(fdobj) == pd.DataFrame:
         #Multivariate
         #Here in R, the first element will be named '1'
-        if len(x.keys() > 1):
+        if len(fdobj.keys()) > 1:
             x = np.transpose(fdobj['1']['coefficients'])
             for i in range(0, len(fdobj)):
                 x = np.c_[x, np.transpose(fdobj[f'{i}']['coefficients'])]
@@ -41,20 +42,21 @@ def _T_funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
     if clas > 0:
         unkno = (kno-1)*(-1)
 
-    t = np.repeat(0, N*K).reshape(N, K)
-    tw = np.repeat(0, N*K).reshape(N, K)
-    mah_pen = np.repeat(0, N*K).reshape(N,K)
-    K_pen = np.repeat(0, N*K).reshape(N,K)
-    num = np.repeat(0, N*K).reshape(N,K)
-    ft = np.repeat(0, N*K).reshape(N,K)
+    t = np.repeat(0., N*K).reshape(N, K)
+    tw = np.repeat(0., N*K).reshape(N, K)
+    mah_pen = np.repeat(0., N*K).reshape(N,K)
+    K_pen = np.repeat(0., N*K).reshape(N,K)
+    num = np.repeat(0., N*K).reshape(N,K)
+    ft = np.repeat(0., N*K).reshape(N,K)
 
-    s = np.repeat(0, K)
+    s = np.repeat(0., K)
 
     for i in range(0,K):
-        s[i] = np.sum(np.log(a[i, 0:d[i]]))
+        s[i] = np.sum(np.log(a[i, 0:int(d[i])]))
 
         Qk = Q1[f"{i}"]
-        aki = np.sqrt(np.diag(np.concatenate((1/a[i, 0:d[i]],np.repeat(1/b[i], p-d[i]) ))))
+        aki = np.sqrt(np.diag(np.concatenate((1/a[i, 0:int(d[i])],np.repeat(1/b[i], p-int(d[i])) ))))
+        #print(aki)
         muki = mu[i]
 
         Wki = Wlist["W_m"]
@@ -72,9 +74,13 @@ def _T_funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
     ft = np.exp(K_pen)
     ft_den = np.sum(ft, axis=1)
     kcon = - np.apply_along_axis(np.max, 1, K_pen)
-    K_pen = K_pen + kcon
+    #print(K_pen)
+    #print(kcon)
+    K_pen = K_pen + np.atleast_2d(kcon).T
     num = np.exp(K_pen)
-    t = num / np.sum(num, axis=1)
+    #print(num)
+    #print(np.sum(num, axis=1))
+    t = num / np.atleast_2d(np.sum(num, axis=1)).T
 
     L1 = np.sum(np.log(ft_den))
     L = np.sum(np.log(np.sum(np.exp(K_pen), axis=1)) - kcon)
@@ -86,7 +92,7 @@ def _T_funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
     tcol = np.sum(t, axis=0)
 
     if(np.any(tcol<p)):
-        t = (t + 0.0000001) / (trow + (K*0.0000001))
+        t = (t + 0.0000001) / np.atleast_2d(trow + (K*0.0000001)).T
 
     if (clas > 0):
         t = unkno*t
@@ -97,7 +103,7 @@ def _T_funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
 
     #Nothing is returned here in R
     # Return this for testing purposes
-    return {t: t, tw: tw, L: L}
+    return {'t': t, 'tw': tw, 'L': L}
 
 def _T_imahalanobis(x, muk, wk, Qk, aki):
     
@@ -125,3 +131,51 @@ def _T_imahalanobis(x, muk, wk, Qk, aki):
 #so_file = "./t-funHDDC/src/TFunHDDC.so"
 #c_lib = ctypes.CDLL(so_file)
 #print(type(c_lib))
+
+w = np.diag(np.repeat(1.,21))
+w_m = np.diag(np.repeat(1.,21))
+dety = 1.
+
+wlist = {'W': w, 'W_m': w_m, 'dety': dety}
+
+Q = {}
+for i in range(0, 3):
+    Q[f'{i}'] = np.repeat(i*0.1, 21*21).reshape((21,21))
+
+Q1 = {}
+for i in range(0, 3):
+    Q1[f'{i}'] = np.repeat((i+1)*0.1, 21*21).reshape((21,21))
+
+nsplines = 21
+r1 = np.concatenate((np.array([1.,0,50, 100]), np.repeat(0, nsplines-4)))
+r2 = np.concatenate((np.array([0.,0,80,0,40,2]), np.repeat(0, nsplines-6)))
+r3 = np.concatenate((np.repeat(0, nsplines-6), np.array([20.,0,80,0,0,100])))
+mu = np.concatenate((np.array([r1]), np.array([r2]), np.array([r3])), axis=0)
+
+a = np.zeros((3,3))
+a[0] = np.array([1.e-75, 3.e60, None])
+a[1] = np.array([7.e-60, 4.e-55, 8.e60])
+a[2] = np.array([3.6e65, 4.7e-55, 1.e10])
+
+par = {'K': 3, 'nux':np.array([2.,2,2]), 'a': a, 'b': np.array([3.e-20,16.5e-15,7.e30]), 'd':np.array([2,3,3.]), 'mu':mu, 'prop': np.array([1/3,1/3,1/3]), 'Q':Q, 'Q1':Q1}
+
+data = []
+with open('data.csv', newline='') as csvfile:
+    datareader = csv.reader(csvfile, delimiter=' ', quotechar='|')
+    for row in datareader:
+        data.append(row[0].split(',')[1:])
+
+data = {'coefficients': np.array(data[1:]).astype(float)}
+res = _T_funhddt_e_step1(data, wlist, par)
+print(res)
+names = ['t', 'tw', 'L']
+
+with open('restestmix.csv', 'w', newline='') as csvfile:
+    datawriter = csv.writer(csvfile)
+    for i in res.items():
+        if i[0] != 'L':
+            for j in i[1]:
+                datawriter.writerow(j)
+
+        else:
+            datawriter.writerow(i)
