@@ -26,11 +26,11 @@ mu=rbind(c(1, 0, 50, 100, rep(0, nsplines-4)),
 mu
 a=matrix(nrow=3,ncol=3,0)
 a
-a[1,]=c(1e-75, 3e60, NA)
-a[2,]=c(7e-60, 4e-55, 8e60)
-a[3,]=c(3.6e65,4.7e-55,1e10)
+a[1,]=c(5, 1, 6)
+a[2,]=c(7.5, 8.9, NA)
+a[3,]=c(7, 1.2, NA)
 a
-par=list(K=3,nux=c(2,2,2),a=a, b=c(3e-20,16.5e-15,7e30), d=c(2,3,3),mu=mu,prop=c(1/3,1/3,1/3),
+par=list(K=3,nux=c(2,2,2),a=a, b=c(4,5,2.3), d=c(3,2,2),mu=mu,prop=c(1/3,1/3,1/3),
          Q=Q,Q1=Q1)
 res = TFunHDDC:::.T_funhddt_e_step1(data$fd,Wlist, par,clas=0,known=NULL, kno=NULL)
 

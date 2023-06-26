@@ -8,6 +8,7 @@ import pandas as pd
 import math
 import ctypes
 import scipy.special as scip
+import scipy.optimize as scio
 #------------------------------------------------------------------------------#
 
 
@@ -545,9 +546,9 @@ def _T_funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
     ft = np.exp(K_pen)
     ft_den = np.sum(ft, axis=1)
     kcon = - np.apply_along_axis(np.max, 1, K_pen)
-    K_pen = K_pen + kcon
+    K_pen = K_pen + np.atleast_2d(kcon).T
     num = np.exp(K_pen)
-    t = num / np.sum(num, axis=1)
+    t = num / np.atleast_2d(np.sum(num, axis=1)).T
 
     L1 = np.sum(np.log(ft_den))
     L = np.sum(np.log(np.sum(np.exp(K_pen), axis=1)) - kcon)
@@ -568,9 +569,9 @@ def _T_funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
             if (kno[i] == 1):
                 t[i, known[i]] = 1
 
-    #Nothing is returned here
+    #Nothing is returned here in R
 
-    #{t: t, tw: tw, L: L}
+    return {t: t, tw: tw, L: L}
 
 
 
@@ -697,7 +698,9 @@ def _T_tyxf7(dfconstr, nux, n, t, tw, K, p, N):
         for i in range(0, K):
             constn = 1 + (1/n[i]) * np.sum(t[:, i] * (np.log(tw[:, i]) - tw[:, i])) + scip.digamma((dfoldg[i] + p)/2) - np.log((dfoldg[i] + p)/2)
 
-            #UNIROOT HERE (Try Brent method in scipy?)
+            f = lambda v : np.log(v/2) - scip.digamma(v/2) + constn
+            #Verify this outputs the same as R: may need to set rtol to 0
+            nux[i] = scio.brentq(f, 0.0001, 1000, xtol=0.00001)
 
             if nux[i] > 200:
                 nux[i] = 200
@@ -709,7 +712,9 @@ def _T_tyxf7(dfconstr, nux, n, t, tw, K, p, N):
         dfoldg = nux[0]
         constn = 1 + (1/N) * np.sum(t *(np.log(tw) - tw)) + scip.digamma( (dfoldg + p) / 2) - np.log( (dfoldg + p) / 2)
 
-        #UNIROOT HERE
+        f = lambda v : np.log(v/2) - scip.digamma(v/2) + constn
+            #Verify this outputs the same as R: may need to set rtol to 0
+        dfsamenewg = scio.brentq(f, 0.0001, 1000, xtol=0.00001)
 
         if dfsamenewg > 200:
             dfsamenewg = 200
