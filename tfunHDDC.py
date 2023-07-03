@@ -407,7 +407,7 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
         prop = _Table(m['prop'], rownames=[''], colnames=np.arange(0, m['K']))
         nux = _Table(m['nux'], rownames=[''], colnames=np.arange(0, m['K']))
 
-        complexity = _T_hdc_getComplexity(m, p, dfconstr)
+        complexity = _T_hdc_getComplexityt(m, p, dfconstr)
         #TODO class here
         cls = np.argmax(t, axis=0)
 
@@ -790,6 +790,9 @@ def _T_tyxf8(dfconstr, nux, n, t, tw, K, p, N):
 
     return newnux
 
+def _T_mypcat_fd1():
+    return None
+
 def _T_hddc_ari(x, y):
     if type(x) != np.ndarray:
         x = np.array(x)
@@ -803,7 +806,7 @@ def _T_hddc_ari(x, y):
     b = np.sum(scip.binom(np.sum(tab, axis=1), 2)) - a
     c = np.sum(scip.binom(np.sum(tab, axis=0), 2)) - a
     d = scip.binom(np.sum(tab), 2) - a - b - c
-    ari = (a - (a + b) * (a + c)/(a+b+c+d))/(a+b+a+c)/2 - (a+b) * (a + c)/(a+b+c+d))
+    ari = (a - (a + b) * (a + c)/(a+b+c+d))/(a+b+a+c)/2 - (a+b) * (a + c)/(a+b+c+d)
     return ari
 
 def _T_hdclassift_bic(par, p, dfconstr):
@@ -880,6 +883,46 @@ def _T_hdclassift_bic(par, p, dfconstr):
     icl = bic - 2*np.sum(Z*np.log(t + 1.e-15))
 
     return {'bic': bic, 'icl': icl}
+
+def _T_hdc_getComplexityt(par, p, dfconstr):
+    model = par['model']
+    K = par['K']
+    d = par['d']
+    b = par['b']
+    a = par['a']
+    mu = par['mu']
+    prop = par['prop']
+
+    if dfconstr == 'no':
+        ro = K*(p+1)+K - 1
+
+    else:
+        ro = K*p + K
+
+    tot = np.sum(d*(p-(d+1)/2))
+    D = np.sum(d)
+    d = d[0]
+    to = d*(p-(d+1)/2)
+
+    if model == 'AKJBKQKDK':
+        m = ro + tot + D + K
+
+    elif model == "AKBKQKDK":
+        m = ro + tot + 2*K
+
+    elif model == "ABKQKDK":
+        m = ro + tot + K + 1
+
+    elif model == "AKJBQKDK":
+        m = ro + tot + D + 1
+
+    elif model == "AKBQKDK":
+        m = ro + tot + K + 1
+
+    elif model == "ABQKDK":
+        m = ro + tot + 2
+
+    return m
 
 def _T_imahalanobis(x, muk, wk, Qk, aki):
     
