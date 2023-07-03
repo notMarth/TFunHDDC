@@ -790,8 +790,31 @@ def _T_tyxf8(dfconstr, nux, n, t, tw, K, p, N):
 
     return newnux
 
-def _T_mypcat_fd1():
-    return None
+def _T_mypcat_fd1(fdobj, Wlist, Ti, corI):
+
+    mean_fd = fdobj
+
+    coefmean = np.apply_along_axis(np.sum, axis=0, arr=(corI.T)@np.repeat(1,fdobj.coefficients.shape[1]))/ np.sum(corI)
+
+    fdobj.coefficients = np.apply_along_axis(lambda col: col - coefmean, axis=0, arr=fdobj.coefficients)
+    mean_fd.coefficients = {'mean': coefmean}
+    coef = fdobj.coefficients.T
+    temp = _T_repmat(np.sqrt(corI), n=coef.T.shape[0], p=1) * coef.T
+    mat_cov = np.inner(temp, temp) / np.sum(Ti)
+    cov = (Wlist['W_m']@ mat_cov)@(Wlist['W_m'].T)
+
+    valeurs = np.linalg.eig(cov)
+    valeurs_propres = valeurs.eigenvalues
+    vecteurs_propres = valeurs.eigenvectors
+    fonctionspropres = fdobj
+    bj = np.linalg.solve(Wlist['W_m'], np.eye(Wlist['W_m'].shape[0]))@vecteurs_propres
+    fonctionspropres['coefficients'] = bj
+
+    scores = skfda.misc.inner_product_matrix(fdobj, fonctionspropres)
+    varprop = valeurs_propres / np.sum(valeurs_propres)
+    pcafd = {'valeurs_propres': valeurs_propres, 'harmonic': fonctionspropres, 'scores': scores, 'covariance': cov, 'U':bj, 'meanfd': mean_fd}
+
+    return pcafd
 
 def _T_hddc_ari(x, y):
     if type(x) != np.ndarray:
