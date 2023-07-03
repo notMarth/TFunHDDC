@@ -708,7 +708,39 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
             ai[i] = np.repeat(np.sum(ev[i, 0:d[i]]/d[i]), np.max(d))
 
     elif model == 'AJBQD':#LINE 1256
-        print("notdone")
+        for i in range(K):
+            ai[i] = ev[0:d[0]]
+
+    #Verify if replacement length is an issue
+    elif model == "ABQD":
+        ai = np.sum(ev[0:d[0]])/d[0]
+
+    else:
+        a = 0
+        eps = np.sum(prop*d)
+        for i in range(K):
+            a = a + np.sum(ev[i, 0:d[i]]) * prop[i]
+        ai = np.repeat(a/eps, K*max(d)).reshape((K, max(d)))
+
+    
+    bi = np.repeat(None)
+    denom = np.min(N, p)
+    if model in ['AKJBKQKDK', 'AKBKQKDK', 'ABKQKDK', 'AKJBKQKD', 'AKBKQKD', 'ABKQKD']:
+        for i in range(K):
+            remainEV = traceVect[i] - np.sum(ev[i, 0:d[i]])
+            bi[i] = remainEV/(p-d[i])
+
+    else:
+        b = 0
+        eps = np.sum(prop*d)
+        for i in range(K):
+            remainEV = traceVect[i] - np.sum(ev[i, 0:d[i]])
+            b = b+remainEV*prop[i]
+        bi[0:K] = b/(np.min(N,p)-eps)
+
+
+    result = {'model':model, "K": K, "d":d, "a":ai, "b": bi, "mu":mu, "prop": prop, "nux":nux, "ev":ev, "Q":Q, "fpcaobj":fpcaobj, "Q1":Q1}
+    return result        
 
 
 #degrees of freedom functions modified yxf7 and yxf8 functions
