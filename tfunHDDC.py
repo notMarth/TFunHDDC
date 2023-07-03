@@ -460,22 +460,6 @@ def _T_initmypca_fd1(fdobj, Wlist, Ti):
 
     return ipcafd
 
-def _T_hddc_ari(x, y):
-    if type(x) != np.ndarray:
-        x = np.array(x)
-
-    if type(y) != np.ndarray:
-        y = np.array(y)
-
-    tab = pd.crosstab(x, y)
-    if np.all(tab.shape == (1,1)): return 1
-    a = np.sum(scip.binom(tab, 2))
-    b = np.sum(scip.binom(np.sum(tab, axis=1), 2)) - a
-    c = np.sum(scip.binom(np.sum(tab, axis=0), 2)) - a
-    d = scip.binom(np.sum(tab), 2) - a - b - c
-    ari = (a - (a + b) * (a + c)/(a+b+c+d))/(a+b+a+c)/2 - (a+b) * (a + c)/(a+b+c+d))
-    return ari
-
 # Why not just pass in x instead of fdobj?
 def _T_funhddt_twinit(fdobj, wlist, par, nux):
 
@@ -805,6 +789,97 @@ def _T_tyxf8(dfconstr, nux, n, t, tw, K, p, N):
         newnux = np.repeat(dfsamenewg, K)
 
     return newnux
+
+def _T_hddc_ari(x, y):
+    if type(x) != np.ndarray:
+        x = np.array(x)
+
+    if type(y) != np.ndarray:
+        y = np.array(y)
+
+    tab = pd.crosstab(x, y)
+    if np.all(tab.shape == (1,1)): return 1
+    a = np.sum(scip.binom(tab, 2))
+    b = np.sum(scip.binom(np.sum(tab, axis=1), 2)) - a
+    c = np.sum(scip.binom(np.sum(tab, axis=0), 2)) - a
+    d = scip.binom(np.sum(tab), 2) - a - b - c
+    ari = (a - (a + b) * (a + c)/(a+b+c+d))/(a+b+a+c)/2 - (a+b) * (a + c)/(a+b+c+d))
+    return ari
+
+def _T_hdclassift_bic(par, p, dfconstr):
+    #mux and mu not used, should we get rid of them?
+    model = par['model']
+    K = par['K']
+    d = par['d']
+    b = par['b']
+    a = par['a']
+    mu = par['mu']
+    N = par['N']
+    prop = par['prop']
+    mux = par['mux']
+
+    if len(b) == 1:
+        eps = np.sum(prop*d)
+        #get ncol from ev
+        n_max = par['ev'].shape[1]
+        b = b*(n_max-eps) / (p-eps)
+        b = np.tile(b, K)
+
+    if len(a) == 1:
+        #repeat single element
+        a = np.repeat(a, K*max(d)).reshape((K, max(d)))
+
+    elif len(a) == K:
+        #Repeat vector column-wise
+        a = np.tile(a, K*max(d)).reshape((K, max(d))).T
+
+    elif model == "AJBQD":
+        #repeat vector row-wise
+        a = np.tile(a, K*d[0]).reshape((K, d[1]))
+
+    if np.nanmin(a) <= 0 or np.any(b < 0):
+        return - np.Inf
+    
+    if np.isnan(par['loglik']):
+        som_a = np.zeros(K)
+
+        for i in range(K):
+            som_a[i] = np.sum(np.log(a[i, 0:d[i]]))
+        L = -(1/2)*np.sum(prop * (som_a + (p-d) * np.log(b) - 2 * np.log(prop) + p * (1 + np.log(2*np.pi))))*N
+
+    else:
+        L = par['loglik'][len(par['loglik'])]
+
+    if dfconstr == 'no':
+        ro = K*(p+1)+K-1
+    else:
+        ro = K*p+K
+    tot = np.sum(d*(p-(d+1)/2))
+    D = np.sum(d)
+    d = d[0]
+    to = d*(p-(d+1)/2)
+
+    if model == 'AKJBKQKDK':
+        m = ro + tot + D + K
+    elif model == "AKBKQKDK":
+        m = ro + tot + 2*K
+    elif model == "ABKQKDK":
+        m = ro + tot + K + 1
+    elif model == "AKJBQKDK":
+        m = ro + tot + D + 1
+    elif model == "AKBQKDK":
+        m = ro + tot + K + 1
+    elif model == "ABQKDK":
+        m = ro + tot + 2
+
+    bic = - (-2*L + m * np.log(N))
+
+    t = par['posterior']
+
+    Z = ((t - np.apply_along_axis(np.max, t, axis=0)) == 0) + 0
+    icl = bic - 2*np.sum(Z*np.log(t + 1.e-15))
+
+    return {'bic': bic, 'icl': icl}
 
 def _T_imahalanobis(x, muk, wk, Qk, aki):
     
