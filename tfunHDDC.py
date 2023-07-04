@@ -979,6 +979,14 @@ def _T_hdc_getComplexityt(par, p, dfconstr):
 
     return m
 
+def _T_repmat(v, n, p):
+    if p == 1:
+        M = np.c_[np.repeat(1, n)]@np.atleast_2d(v)
+    else:
+        M = np.tile(np.repeat(v, n).reshape(len(v), n), 2)
+
+    return M
+
 def _T_imahalanobis(x, muk, wk, Qk, aki):
     
     #C code not working for now, try compiling dll on current machine?
