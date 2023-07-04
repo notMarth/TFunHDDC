@@ -34,8 +34,97 @@ par=list(K=3,nux=c(201,201,201),a=a, b=c(4e-33,4.4e-65,0.1), d=c(3,3,3),mu=mu,pr
          Q=Q,Q1=Q1)
 res = TFunHDDC:::.T_funhddt_e_step1(data$fd,Wlist, par,clas=0,known=NULL, kno=NULL)
 
-test17 = TFunHDDC:::.T_tyxf7('no', par[['nux']], colSums(res[['t']]), res[['t']], res[['tw']], 3, 21, 21)
+.T_tyxf7 <- function(dfconstr, nux, n, t, tw, K, p, N){
+  if(dfconstr=="no"){
+    dfoldg <- nux
+    for(i in 1:K){
+      constn <- 1 + (1/n[i]) * sum(t[, i] * ( log(tw[, i]) - tw[, i]) ) +
+        digamma( (dfoldg[i] + p) / 2 ) - log( (dfoldg[i] + p) / 2 )
+      temp = digamma( (dfoldg[i] + p) / 2 )
+      print("digamma 7")
+      print(temp)
+      #print("7 no")
+      #print(constn)
+      nux[i] <- uniroot( function(v) log(v / 2) - digamma(v / 2) + constn,
+                         lower = 0.0001, upper = 1000, tol = 0.00001)$root
+      if(nux[i] > 200){
+        nux[i] <- 200
+      }
+      if(nux[i] < 2){
+        nux[i] <- 2
+      }
+    }
+  }
+  else
+  {
+    dfoldg <- nux[1]
+    constn <- 1 + (1/N) * sum( t * (log(tw) - tw) ) +
+      digamma( (dfoldg + p) / 2 ) - log( (dfoldg + p) / 2 )
+    
+    #print("7 yes")
+    #print(constn)
+    dfsamenewg <- uniroot( function(v) log(v / 2) - digamma(v / 2) + constn,
+                           lower = 0.0001, upper = 1000, tol = 0.01)$root
+    if(dfsamenewg > 200){
+      dfsamenewg <- 200
+    }
+    if(dfsamenewg < 2){
+      dfsamenewg <- 2
+    }
+    nux <- c( rep(dfsamenewg, K) )
+  }
+  return(nux)
+} # end of .T_tyxf7
+
+.T_tyxf8 <- function(dfconstr, nux, n, t, tw, K, p, N){
+  if(dfconstr == "no"){
+    dfoldg <- nux
+    for(i in 1:K){
+      constn <- 1 + (1 / n[i]) * sum( t[, i] * (log(tw[, i]) - tw[,i]) ) +
+        digamma( (dfoldg[i] + p) / 2 ) -
+        log( (dfoldg[i]+p) / 2 )
+      temp1 = (dfoldg[i] + p) / 2 
+      temp = digamma( (dfoldg[i] + p) / 2 )
+      print('dfoldg')
+      print(dfoldg)
+      constn <- -constn
+      print("digamma 8")
+      print(temp)
+      #print("8 no")
+      #print(constn)
+      nux[i] <- (-exp(constn) + 2 * ( exp(constn)) *
+                   ( exp( digamma(dfoldg[i] / 2)) -
+                       ( (dfoldg[i]/2) - (1/2) ) ) ) / ( 1 - exp(constn) )
+      if(nux[i] > 200){
+        nux[i] <- 200
+      }
+      if(nux[i] < 2){
+        nux[i] <- 2
+      }
+    }
+  } else {
+    dfoldg <- nux[1]
+    constn <- 1 + (1 / N) * sum( t * (log(tw) - tw) ) +
+      digamma( (dfoldg + p) / 2 ) - log( (dfoldg + p) / 2 )
+    constn <- -constn
+    #print("8 yes")
+    #print(constn)
+    dfsamenewg <- (-exp(constn) + 2 * ( exp(constn)) *
+                     (exp( digamma(dfoldg / 2)) -
+                        ( (dfoldg /2) - (1 / 2) ) ) ) / ( 1 - exp(constn) )
+    if(dfsamenewg > 200){
+      dfsamenewg <- 200
+    }
+    if(dfsamenewg < 2){
+      dfsamenewg <- 2
+    }
+    nux <- c( rep(dfsamenewg, K) )
+  }
+  return(nux)
+} # end of .T_tyxf8
+
+test17 = .T_tyxf7('no', par[['nux']], colSums(res[['t']]), res[['t']], res[['tw']], 3, 21, 21)
 test27 = TFunHDDC:::.T_tyxf7('yes', par[['nux']], colSums(res[['t']]), res[['t']], res[['tw']], 3, 21, 21)
 
-test18 = TFunHDDC:::.T_tyxf8('no', par[['nux']], colSums(res[['t']]), res[['t']], res[['tw']], 3, 21, 21)
+test18 = .T_tyxf8('no', par[['nux']], colSums(res[['t']]), res[['t']], res[['tw']], 3, 21, 21)
 test28 = TFunHDDC:::.T_tyxf8('yes', par[['nux']], colSums(res[['t']]), res[['t']], res[['tw']], 3, 21, 21)

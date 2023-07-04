@@ -15,6 +15,7 @@ def _T_tyxf7(dfconstr, nux, n, t, tw, K, p, N):
             f = lambda v : np.log(v/2) - scip.digamma(v/2) + constn
             #Verify this outputs the same as R: may need to set rtol to 0
             nux[i] = scio.brentq(f, 0.0001, 1000, xtol=0.00001)
+            
 
             if nux[i] > 200:
                 nux[i] = 200.
