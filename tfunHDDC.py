@@ -344,10 +344,10 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
             #m_step1 called here
             m = _T_funhddt_m_step1(fdobj, wlist, K, t, tw, nux, dfupdate, dfconstr, model, threshold, method, noise_ctrl, com_dim, d_max, d_set)
 
-            nux = m['nux']
+            nux = m['nux'].copy()
             
             #e_step1 called here
-            to = _T_funhddt_e_step1(fdobj, wlist, K, t, tw, nux, dfupdate, dfconstr, model, threshold, method, noise_ctrl, com_dim, d_max, d_set)
+            to = _T_funhddt_e_step1(fdobj, wlist, m, 0, known, kno)
 
             
             L = to['L']
@@ -433,30 +433,77 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
 def _T_initmypca_fd1(fdobj, Wlist, Ti):
     
     #TODO add multivariate
-    mean_fd = fdobj
-    #TODO does pass by reference happen here like with lists?
-    coef = fdobj.coefficients
-    #by default numpy cov function uses rows as variables and columns as observations, opposite to R
-    mat_cov = np.cor(m=coef, aweights=Ti, ddof=0, rowvar=False)
-    #may need to try this with other params depending on how weights are passed in
-    coefmean = np.average(coef, axis=0, weights=Ti)
-    #Verify this
-    fdobj.coefficients = np.apply_along_axis(lambda col: col - coefmean, axis=0, arr=fdobj.coefficients)
+    
+    #Univariate here
+    if type(fdobj) == skfda.FDataBasis:
+        mean_fd = fdobj
+        #TODO does pass by reference happen here like with lists?
+        coef = fdobj.coefficients
+        #by default numpy cov function uses rows as variables and columns as observations, opposite to R
+        mat_cov = np.cor(m=coef, aweights=Ti, ddof=0, rowvar=False)
+        #may need to try this with other params depending on how weights are passed in
+        coefmean = np.average(coef, axis=0, weights=Ti)
+        #Verify this
+        fdobj.coefficients = np.apply_along_axis(lambda col: col - coefmean, axis=0, arr=fdobj.coefficients)
 
-    #Replaces as.matrix(data.frame(mean=coefmean))
-    mean_fd.coefficients = {'mean':coefmean}
-    cov = (Wlist['W_m']@mat_cov)@(Wlist['W_m'].T)
+        #Replaces as.matrix(data.frame(mean=coefmean))
+        mean_fd.coefficients = {'mean':coefmean}
+        cov = (Wlist['W_m']@mat_cov)@(Wlist['W_m'].T)
 
-    valeurs = np.linalg.eig(cov)
-    valeurs_propres = valeurs.eigenvalues
-    vecteurs_propres = valeurs.eigenvectors
-    fonctionspropres = fdobj
-    bj = np.linalg.solve(Wlist['W_m'], np.eye(Wlist['W_m'].shape[0]))@vecteurs_propres
-    fonctionspropres['coefficients'] = bj
+        valeurs = np.linalg.eig(cov)
+        valeurs_propres = valeurs.eigenvalues
+        vecteurs_propres = valeurs.eigenvectors
+        fonctionspropres = fdobj
+        bj = np.linalg.solve(Wlist['W_m'], np.eye(Wlist['W_m'].shape[0]))@vecteurs_propres
+        fonctionspropres['coefficients'] = bj
 
-    scores = skfda.misc.inner_product_matrix(fdobj, fonctionspropres)
-    varprop = valeurs_propres / np.sum(valeurs_propres)
-    ipcafd = {'valeurs_propres': valeurs_propres, 'harmonic': fonctionspropres, 'scores': scores, 'covariance': cov, 'U':bj, 'meanfd': mean_fd, 'mux': coefmean}
+        scores = skfda.misc.inner_product_matrix(fdobj, fonctionspropres)
+        varprop = valeurs_propres / np.sum(valeurs_propres)
+        ipcafd = {'valeurs_propres': valeurs_propres, 'harmonic': fonctionspropres, 'scores': scores, 'covariance': cov, 'U':bj, 'meanfd': mean_fd, 'mux': coefmean}
+
+    #Multivariate
+    else:
+        mean_fd = {}
+        for i in range(len(fdobj)):
+            #TODO Start at 0? or should we start at 1?
+            mean_fd[f'{i}'] = fdobj[f'{i}']
+
+        coef = fdobj['0'].coefficients
+
+        for i in range(1, len(fdobj)):
+            coef = np.c_[coef, fdobj[f'{i}'].coefficients]
+
+        mat_cov = np.cor(m=coef, aweights=Ti, ddof=0, rowvar=False)
+        coefmean = np.average(coef, axis=0, weights=Ti)
+
+        n_lead = 0
+        #R Doesn't transpose this here, might need shape[1] instead
+        n_var = fdobj['0'].coefficients.shape[0]
+        #Sweep
+        fdobj['0'].coefficients = np.apply_along_axis(lambda col: col - coefmean[(n_lead + 1):(n_var + n_lead)], axis=0, arr=fdobj['0'].coefficients)
+
+        mean_fd['0'].coefficients = {'mean': coefmean[(n_lead + 1):(n_var + n_lead)]}
+
+        for i in range(1, len(fdobj)):
+            n_lead = n_lead + n_var
+            #R doesn't transpose this here, might need shape[1] instead
+            n_var = fdobj[f'{i}'].coefficients.shape[0]
+            fdobj[f'{i}'].coefficients = {'mean': coefmean[(n_lead + 1):(n_var + n_lead)]}
+
+        cov = (Wlist['W_m']@mat_cov)@(Wlist['W_m'].T)
+        valeurs = np.linalg.eig(cov)
+        valeurs_propres = valeurs.eigenvalues
+        vecteurs_propres = valeurs.eigenvectors
+        bj = np.linalg.solve(Wlist['W_m'], np.eye(Wlist['W_m'].shape[0]))@vecteurs_propres
+        fonctionspropres = fdobj['0']
+        fonctionspropres.coefficients
+        scores = (coef@Wlist['W_m'])@bj
+
+        varprop = valeurs_propres / np.sum(valeurs_propres)
+
+        ipcafd = {'valeurs_propres': valeurs_propres, 'harmonic': fonctionspropres,
+                  'scores': scores, 'covariance': cov, 'U': bj, 'varprop': varprop,
+                  'meanfd': mean_fd, 'mux': coefmean}
 
     return ipcafd
 
@@ -855,13 +902,13 @@ def _T_hddc_ari(x, y):
     if type(y) != np.ndarray:
         y = np.array(y)
 
-    tab = pd.crosstab(x, y)
+    tab = pd.crosstab(x, y)._data
     if np.all(tab.shape == (1,1)): return 1
     a = np.sum(scip.binom(tab, 2))
     b = np.sum(scip.binom(np.sum(tab, axis=1), 2)) - a
     c = np.sum(scip.binom(np.sum(tab, axis=0), 2)) - a
     d = scip.binom(np.sum(tab), 2) - a - b - c
-    ari = (a - (a + b) * (a + c)/(a+b+c+d))/(a+b+a+c)/2 - (a+b) * (a + c)/(a+b+c+d)
+    ari = (a - (a + b) * (a + c)/(a+b+c+d))/((a+b+a+c)/2 - (a+b) * (a + c)/(a+b+c+d))
     return ari
 
 def _T_hdclassift_bic(par, p, dfconstr):
@@ -943,10 +990,12 @@ def _T_hdc_getComplexityt(par, p, dfconstr):
     model = par['model']
     K = par['K']
     d = par['d']
-    b = par['b']
-    a = par['a']
-    mu = par['mu']
-    prop = par['prop']
+
+    #These don't get used
+    #b = par['b']
+    #a = par['a']
+    #mu = par['mu']
+    #prop = par['prop']
 
     if dfconstr == 'no':
         ro = K*(p+1)+K - 1
