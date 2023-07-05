@@ -1068,10 +1068,8 @@ def _T_hdc_getComplexityt(par, p, dfconstr):
     return m
 
 def _T_repmat(v, n, p):
-    if p == 1:
-        M = np.c_[np.repeat(1, n)]@np.atleast_2d(v)
-    else:
-        M = np.tile(np.repeat(v, n).reshape(len(v), n), 2)
+    M = np.c_[np.repeat(1, n)]@np.atleast_2d(v)
+    M = np.tile(M, p)
 
     return M
 
