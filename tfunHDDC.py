@@ -950,6 +950,94 @@ def _T_hddc_ari(x, y):
     ari = (a - (a + b) * (a + c)/(a+b+c+d))/((a+b+a+c)/2 - (a+b) * (a + c)/(a+b+c+d))
     return ari
 
+def _T_hdclassif_dim_choice(ev, n, method, threshold, graph, noise_ctrl, d_set):
+    #TODO add graphing
+
+    N = np.sum(n)
+    prop = n/N
+    #Is ev a matrix? then K = # of rows in ev
+    K = len(ev) if ev.ndim > 1 else 1
+
+    if (ev.ndim > 1 and K > 1):
+        p = len(ev[0])
+
+        if (method == "cattell"):
+            #Trivial tests show that diff does the same thing in Python that it does in R
+            dev = np.abs(np.apply_along_axis(np.diff, 0, ev))
+            max_dev = np.apply_along_axis(np.nanmax, 1, dev)
+            dev = dev / np.repeat(max_dev, p-1)
+            #Apply's axis should cover this situation. Try axis=1 in *args if doesn't work
+            d = np.apply_along_axis(np.argmax, 1, (dev > threshold)*(np.arange(1, p-1))*((ev[:,1:] > noise_ctrl).T))
+
+        elif (method == "bic"):
+
+            d = np.repeat(0, K)
+            
+            for i in range(K):
+                Nmax = np.max(np.where(ev[i] > noise_ctrl)) - 1
+                B = np.empty((1, Nmax))
+                p2 = np.sum(not np.isnan(ev[i]))
+                Bmax = -np.inf
+
+                for kdim in range(Nmax):
+                    if d[i] != 0 and kdim > d[i] + 10: break
+                    a = np.sum(ev[i, 0:kdim])/kdim
+                    b = np.sum(ev[i, (kdim + 1):p2])/(p2-kdim)
+
+                    if b < 0 or a < 0:
+                        B[kdim] = -np.inf
+
+                    else:
+                        L2 = -1/2*(kdim*np.log(a) + (p2 - kdim)*np.log(b) - 2*np.log(prop[i]) +p2*(1+1/2*np.log(2*np.pi))) * n[i]
+                        B[kdim] = 2*L2 - (p2+kdim*(p2-(kdim+1)/2)+1) * np.log(n[i])
+
+                    if B[kdim] > Bmax:
+                        Bmax = B[kdim]
+                        d[i] = kdim
+
+            if graph:
+                None
+
+        elif method == "grid":
+            d = d_set
+
+        else:
+            ev = ev.flatten()
+            p = len(ev)
+
+            if method == "cattell":
+                dvp = np.abs(np.diff(ev))
+                Nmax = np.max(np.which(ev>noise_ctrl)) - 1
+                if p ==2:
+                    d = 1
+                else:
+                    d = np.max(np.which(dvp[0:Nmax] >= threshold*np.max(dvp[0:Nmax])))
+                diff_max = np.max(dvp[0:Nmax])
+
+            elif method == "bic":
+                d = 0
+                Nmax = np.max(np.where(ev > noise_ctrl)) - 1
+                B = np.empty((1, Nmax))
+                Bmax = -np.inf
+
+                for kdim in range(Nmax):
+                    if d != 0 and kdim > d+10:
+                        break
+                    a = np.sum(ev[0:kdim])/kdim
+                    b = np.sum(ev[(kdim+1):p])/(p-kdim)
+                    if(b <= 0 or a <= 0):
+                        B[kdim] = -np.inf
+                    else:
+                        L2 = -1/2*(kdim*np.log(a) + (p-kdim)*np.log(b)+p*(1+1/2*np.log(2*np.pi)))*N
+                        B[kdim] = 2*L2 - (p+kdim * (p-(kdim + 1)/2)+1)*np.log(N)
+
+                    if B[kdim] > Bmax:
+                        Bmax = B[kdim]
+                        d = kdim
+
+    return d
+
+
 def _T_hdclassift_bic(par, p, dfconstr):
     #mux and mu not used, should we get rid of them?
     model = par['model']
