@@ -1203,7 +1203,8 @@ def _T_hdc_getTheModel(model, all2models = False):
     return model
 
 def _T_addCommas(x):
-    return np.apply_along_axis(_T_addCommas_single, x)
+    vfunc = np.vectorize(_T_addCommas_single)
+    return vfunc(x)
 
 def _T_addCommas_single(x):
     #R code
