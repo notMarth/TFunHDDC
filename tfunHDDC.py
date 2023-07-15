@@ -1155,6 +1155,53 @@ def _T_hdc_getComplexityt(par, p, dfconstr):
 
     return m
 
+def _T_hdc_getTheModel(model, all2models = False):
+    
+    model_in = model
+    if type(model) != list:
+        try:
+            model = model.tolist()
+        except:
+            print("Model needs to be a list or array")
+            raise
+
+    if(model.ndim > 1):
+        raise ValueError("The argument 'model' must be 1-dimensional")
+    
+    if np.isnan(model):
+        raise ValueError("The argument 'model' cannot contain any Nan")
+
+    ModelNames = np.array(["AKJBKQKDK", "AKBKQKDK", "ABKQKDK", "AKJBQKDK", "AKBQKDK", "ABQKDK", "AKJBKQKD", "AKBKQKD", "ABKQKD", "AKJBQKD", "AKBQKD", "ABQKD"])
+
+    model = [m.upper() for m in model]
+
+    if len(model) == 1 and model == "ALL":
+        if all2models:
+            model = np.arange(0, 14)
+        else:
+            return "ALL"
+        
+    qui = np.where(not model in ModelNames)
+    if len(qui) > 0:
+        if len(qui) == 1:
+            msg = f'(e.g. {model_in[qui]} is incorrect.)'
+
+        else:
+            msg = f'(e.g. {model_in[qui[0]]} or {model_in[qui[1]]} are incorrect.)'
+
+        raise ValueError("Invalid model name " + msg)
+    
+    if np.max(np.unique(model, return_counts=True)[1]) > 1:
+        raise ValueError("Values in 'model' argument should be unique.")
+
+    mod_num = []
+    for i in range(len(model)):
+        mod_num.append(np.where(model[i] == ModelNames))
+    mod_num = np.sort(np.unique(mod_num))
+    model = ModelNames[mod_num]
+
+    return model
+
 def _T_repmat(v, n, p):
     M = np.c_[np.repeat(1, n)]@np.atleast_2d(v)
     M = np.tile(M, p)
