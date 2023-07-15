@@ -1208,6 +1208,14 @@ def _T_repmat(v, n, p):
 
     return M
 
+def _T_diago(v):
+    if len(v) == 1:
+        res = v
+    else:
+        res = np.diag(v)
+
+    return res
+
 def _T_imahalanobis(x, muk, wk, Qk, aki):
     
     #C code not working for now, try compiling dll on current machine?
