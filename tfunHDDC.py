@@ -1202,6 +1202,35 @@ def _T_hdc_getTheModel(model, all2models = False):
 
     return model
 
+def _T_addCommas(x):
+    return np.apply_along_axis(_T_addCommas_single, x)
+
+def _T_addCommas_single(x):
+    #R code
+    '''if not np.isfinite(x):
+        return str(x)
+    
+    s = np.sign(x)
+    x = np.abs(x)
+
+    decimal = x - np.floor(x)
+    if decimal > 0:
+        dec_string = str(decimal)[1:4]
+    else:
+        dec_string = ""
+
+    entier = str(np.floor(x))
+    quoi = list(entier[-1::-1])
+    n = len(quoi)
+    sol = []
+    for i in range(n):
+        sol.extend(quoi[i])
+        if i % 3 == 0 and i != n:
+            sol.append(",")
+
+    '''
+    return "{:,.2f}".format(x)
+
 def _T_repmat(v, n, p):
     M = np.c_[np.repeat(1, n)]@np.atleast_2d(v)
     M = np.tile(M, p)
