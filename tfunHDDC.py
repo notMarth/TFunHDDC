@@ -1158,33 +1158,45 @@ def _T_hdc_getComplexityt(par, p, dfconstr):
 def _T_hdc_getTheModel(model, all2models = False):
     
     model_in = model
-    if type(model) != list:
-        try:
-            model = model.tolist()
-        except:
-            print("Model needs to be a list or array")
-            raise
+    try:
+        new_model = np.array(model,dtype='<U10')
+        model = np.array(model)
+    except:
+        raise ValueError("Model needs to be an array or list")
 
     if(model.ndim > 1):
         raise ValueError("The argument 'model' must be 1-dimensional")
     
-    if np.isnan(model):
-        raise ValueError("The argument 'model' cannot contain any Nan")
+    if type(model[0]) != np.str_:
+        if np.any(np.apply_along_axis(np.isnan, 0, model)):
+            raise ValueError("The argument 'model' cannot contain any Nan")
 
     ModelNames = np.array(["AKJBKQKDK", "AKBKQKDK", "ABKQKDK", "AKJBQKDK", "AKBQKDK", "ABQKDK", "AKJBKQKD", "AKBKQKD", "ABKQKD", "AKJBQKD", "AKBQKD", "ABQKD"])
+    if type(model[0]) == np.str_:
+        if model[0].isnumeric():
+            model = model.astype(np.int_)
+            #print(model)
+        else:
+            new_model = [np.char.upper(m) for m in model]
 
-    model = [m.upper() for m in model]
-
-    if len(model) == 1 and model == "ALL":
+    if len(model) == 1 and new_model[0] == "ALL":
         if all2models:
             model = np.arange(0, 14)
+            new_model = np.arange(0,14)
         else:
             return "ALL"
         
-    qui = np.where(not model in ModelNames)
+    if type(model[0]) == np.int_:
+        #print(model)
+        qui = np.nonzero(np.isin(model, np.arange(0, 14)))[0]
+        if len(qui) > 0:
+            new_model[qui] = ModelNames[model[qui]]
+        #print(new_model)
+        
+    qui = np.nonzero( np.invert(np.isin(new_model, ModelNames)))[0]
     if len(qui) > 0:
         if len(qui) == 1:
-            msg = f'(e.g. {model_in[qui]} is incorrect.)'
+            msg = f'(e.g. {model_in[qui[0]]} is incorrect.)'
 
         else:
             msg = f'(e.g. {model_in[qui[0]]} or {model_in[qui[1]]} are incorrect.)'
@@ -1192,15 +1204,15 @@ def _T_hdc_getTheModel(model, all2models = False):
         raise ValueError("Invalid model name " + msg)
     
     if np.max(np.unique(model, return_counts=True)[1]) > 1:
-        raise ValueError("Values in 'model' argument should be unique.")
+        warnings.warn("Values in 'model' argument should be unique.", UserWarning)
 
     mod_num = []
-    for i in range(len(model)):
-        mod_num.append(np.where(model[i] == ModelNames))
+    for i in range(len(new_model)):
+        mod_num.append(np.nonzero(new_model[i] == ModelNames)[0])
     mod_num = np.sort(np.unique(mod_num))
-    model = ModelNames[mod_num]
+    new_model = ModelNames[mod_num]
 
-    return model
+    return new_model
 
 def _T_addCommas(x):
     vfunc = np.vectorize(_T_addCommas_single)
