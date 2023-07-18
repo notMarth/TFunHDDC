@@ -1060,8 +1060,7 @@ def _T_hddc_ari(x, y):
     return ari
 
 def _T_hdclassif_dim_choice(ev, n, method, threshold, graph, noise_ctrl, d_set):
-    #TODO add graphing
-
+    
     N = np.sum(n)
     prop = n/N
     #Is ev a matrix? then K = # of rows in ev
@@ -1072,34 +1071,42 @@ def _T_hdclassif_dim_choice(ev, n, method, threshold, graph, noise_ctrl, d_set):
 
         if (method == "cattell"):
             #Trivial tests show that diff does the same thing in Python that it does in R
-            dev = np.abs(np.apply_along_axis(np.diff, 0, ev))
+            dev = np.abs(np.apply_along_axis(np.diff, 1, ev))
+            #print(dev)
             max_dev = np.apply_along_axis(np.nanmax, 1, dev)
-            dev = dev / np.repeat(max_dev, p-1)
+            #print(max_dev)
+            dev = (dev / np.repeat(max_dev, p-1).reshape(dev.shape)).T
+            #print(dev)
             #Apply's axis should cover this situation. Try axis=1 in *args if doesn't work
-            d = np.apply_along_axis(np.argmax, 1, (dev > threshold)*(np.arange(1, p-1))*((ev[:,1:] > noise_ctrl).T))
+            d = np.apply_along_axis(np.argmax, 1, (dev > threshold).T*(np.arange(0, p-1))*((ev[:,1:] > noise_ctrl)))
 
         elif (method == "bic"):
 
             d = np.repeat(0, K)
             
             for i in range(K):
-                Nmax = np.max(np.where(ev[i] > noise_ctrl)) - 1
-                B = np.empty((1, Nmax))
-                p2 = np.sum(not np.isnan(ev[i]))
+                Nmax = np.max(np.where(ev[i] > noise_ctrl))
+                B = np.empty((Nmax,1))
+                p2 = np.sum(np.invert(np.isnan(ev[i])))
                 Bmax = -np.inf
 
-                for kdim in range(Nmax):
+                for kdim in range(0, Nmax):
                     if d[i] != 0 and kdim > d[i] + 10: break
-                    a = np.sum(ev[i, 0:kdim])/kdim
-                    b = np.sum(ev[i, (kdim + 1):p2])/(p2-kdim)
+                    #adjusted for python indices
+                    a = np.sum(ev[i, 0:(kdim+1)])/(kdim+1)
+           
+                    b = np.sum(ev[i, (kdim + 1):p2])/(p2-(kdim+1))
+                 
 
                     if b < 0 or a < 0:
                         B[kdim] = -np.inf
 
                     else:
-                        L2 = -1/2*(kdim*np.log(a) + (p2 - kdim)*np.log(b) - 2*np.log(prop[i]) +p2*(1+1/2*np.log(2*np.pi))) * n[i]
-                        B[kdim] = 2*L2 - (p2+kdim*(p2-(kdim+1)/2)+1) * np.log(n[i])
-
+                        #Adjusted for python indices
+                        L2 = -1/2*((kdim+1)*np.log(a) + (p2 - (kdim + 1))*np.log(b) - 2*np.log(prop[i]) +p2*(1+1/2*np.log(2*np.pi))) * n[i]
+                        B[kdim] = 2*L2 - (p2+(kdim+1)*(p2-(kdim+2)/2)+1) * np.log(n[i])
+                        #print(np.log(n[i]))
+                        #print(L2)
                     if B[kdim] > Bmax:
                         Bmax = B[kdim]
                         d[i] = kdim
@@ -1116,7 +1123,7 @@ def _T_hdclassif_dim_choice(ev, n, method, threshold, graph, noise_ctrl, d_set):
 
             if method == "cattell":
                 dvp = np.abs(np.diff(ev))
-                Nmax = np.max(np.which(ev>noise_ctrl)) - 1
+                Nmax = np.max(np.which(ev>noise_ctrl))
                 if p ==2:
                     d = 1
                 else:
@@ -1144,6 +1151,7 @@ def _T_hdclassif_dim_choice(ev, n, method, threshold, graph, noise_ctrl, d_set):
                         Bmax = B[kdim]
                         d = kdim
 
+    #print(len(B))
     return d
 
 
