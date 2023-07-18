@@ -429,7 +429,114 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
         #TODO class here
 
         return params
-        
+
+def _T_funhddt_init(fdobj, Wlist, K, t, nux, model, threshold, method, noise_ctrl, com_dim, d_max, d_set):
+
+    if(type(fdobj) == skfda.FDataBasis or type(fdobj) == skfda.FDataGrid):
+        x = fdobj.coefficients
+
+    #For R testing if fdobj gets passed as a dict
+    #Should also work for dataframe (converts to pandas dataframe)
+    if type(fdobj) == dict or type(fdobj) == pd.DataFrame:
+        #Multivariate
+        if len(x.keys() > 1):
+            x = fdobj[0].coefficients
+            for i in range(0, len(fdobj)):
+                x = np.c_[x, fdobj[f'{i}'].coefficients]
+
+    N = x.shape[0]
+    p = x.shape[1]
+    n = np.sum(t, axis=1)
+
+    prop = n/N
+
+    mu = np.repeat(0, K*p).reshape((K, p))
+    ind = np.apply_along_axis(np.nonzero, 1, t>0)
+    n_bis = np.repeat(0, K)
+
+    for i in range(K):
+        n_bis[i] = len(ind[i])
+
+    traceVect = np.repeat(0, K)
+    ev = np.repeat(0, K*p).reshape((K, p))
+    Q = {}
+    fpcaobj = {}
+
+    for i in range(K):
+        donnees = _T_initmypca_fd1(fdobj, Wlist, t[:,i])
+
+        mu[i] = donnees['mux']
+        traceVect[i] = np.sum(np.diag(donnees['valeurs_propres']))
+        ev[i] = donnees["valeurs_propres"]
+        Q[f'{i}'] = donnees["U"]
+        fpcaobj[f"{i}"] = donnees
+
+    if np.isin(model, np.array(["AJBQD", "ABQD"])):
+        d = np.repeat(com_dim, K)
+
+    elif np.isin(model, np.array(["AKJBKQKD", "AKBKQKD", "ABKQKD", "AKJBQKD", "AKBQKD", "ABQKD"])):
+        dmax = np.min(np.apply_along_axis(np.argmax, 1, (ev>noise_ctrl)*np.repeat(np.arange(0, ev.shape[1])))) - 1
+        if com_dim > dmax:
+            com_dim = np.max(dmax, 1)
+        d = np.rep(com_dim, K)
+
+    else:
+        d = _T_hdclassif_dim_choice(ev, n, method, threshold, False, noise_ctrl, d_set)
+
+    Q1 = Q.copy()
+    
+    for i in range(K):
+        #TODO length of matrcies may not match R
+        Q[f'{i}'] = Q[f'{i}'][:, 0:d[i]]
+
+    ai = np.repeat(np.NaN, K*np.max(d)).reshape((K, np.max(d)))
+    if np.isin(model, np.array(['AKJBKQKDK', 'AKJBQKDK', 'AKJBKQKD', 'AKJBQKD'])):
+        for i in range(K):
+            ai[i, 0:d[i]] = ev[i, 0:d[i]]
+
+    elif np.isin(model, np.array(['AKBKQKDK', 'AKBQKDK', 'AKBKQKD', 'AKBQKD'])):
+        for i in range(K):
+            ai[i] = np.repeat(np.sum(ev[i, 0:d[i]])/d[i], np.max(d))
+
+    elif model == "AJBQD":
+        for i in range(K):
+            ai[i] = ev[0:d[1]]
+    
+    elif model == "ABQD":
+        #TODO check if the sum is returning a vector or a number
+        ai = np.repeat(np.sum(ev[1:d[1]]/d[1]), K*np.max(d)).reshape((K, np.max(d)))
+
+    else:
+        a = 0
+        eps = np.sum(prop*d)
+
+        for i in range(K):
+            a += (np.sum(ev[i, 0:d[i]])*prop[i])
+            ai = np.full((K, max(d)), a/eps)
+
+    bi = np.zeros(K)
+    denom = np.min(N, p)
+    if np.isin(model, np.array(['AKJBKQKDK', 'AKBKQKDK', 'ABKQKDK', 'AKJBKQKD', 'AKBKQKD', 'ABKQKD'])):
+        for i in range(K):
+            remainEV = traceVect[i] - np.sum(ev[i, 0:d[i]])
+
+            bi[i] = remainEV/(p-d[i])
+
+    else:
+        b = 0
+        eps = np.sum(prop*d)
+
+        for i in range(K):
+            remainEV = traceVect[i] - np.sum(ev[i, 0:d[i]])
+
+            b += (remainEV*prop[i])
+
+        bi[0:K] = b/(np.min(N, p) - eps)
+
+    return {'model': model, "K": K, 'd':d, 'a':ai, 'b':bi, 'mu':mu, 'prop':prop,
+            'nux':nux, 'ev':ev, 'Q':Q, 'fpcaobj': fpcaobj, 'Q1':Q1}
+
+
 def _T_initmypca_fd1(fdobj, Wlist, Ti):
         
     #Univariate here
