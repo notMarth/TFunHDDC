@@ -978,61 +978,59 @@ def _T_tyxf8(dfconstr, nux, n, t, tw, K, p, N):
     return newnux
 
 def _T_mypcat_fd1(fdobj, Wlist, Ti, corI):
-
     #Univariate here
     if type(fdobj) == skfda.FDataBasis:
-        mean_fd = fdobj
+        temp = fdobj.copy()
 
+        mean_fd = fdobj.copy()
         #Check this element-wise multiplication
-        coefmean = np.apply_along_axis(np.sum, axis=0, arr=((corI.T)@np.repeat(1,fdobj.coefficients.shape[1]))*fdobj.coefficients)/ np.sum(corI)
-
-        fdobj.coefficients = np.apply_along_axis(lambda col: col - coefmean, axis=0, arr=fdobj.coefficients)
-        mean_fd.coefficients = {'mean': coefmean}
-        coef = fdobj.coefficients.T
-        temp = _T_repmat(np.sqrt(corI), n=coef.T.shape[0], p=1) * coef.T
-        mat_cov = np.inner(temp, temp) / np.sum(Ti)
+        coefmean = np.apply_along_axis(np.sum, axis=1, arr=np.atleast_2d(np.atleast_2d(np.atleast_2d(corI).T@np.atleast_2d(np.repeat(1, fdobj.coefficients.shape[1]))).T * temp.coefficients.T)) / np.sum(corI)
+        temp.coefficients = np.apply_along_axis(lambda row: row - coefmean, axis=1, arr=temp.coefficients)
+        mean_fd.coefficients = coefmean
+        coef = temp.coefficients.copy().T
+        #print(coef)
+        rep = (_T_repmat(np.sqrt(corI), n=coef.shape[0], p=1) * coef).T
+        mat_cov = (rep.T@rep) / np.sum(Ti)
+        #print(rep)
         cov = (Wlist['W_m']@ mat_cov)@(Wlist['W_m'].T)
 
-        valeurs = np.linalg.eig(cov)
-        valeurs_propres = valeurs.eigenvalues
-        vecteurs_propres = valeurs.eigenvectors
-        fonctionspropres = fdobj
-        bj = np.linalg.solve(Wlist['W_m'], np.eye(Wlist['W_m'].shape[0]))@vecteurs_propres
+        valeurs_propres, vecteurs_propres = np.linalg.eig(cov.astype(float))
+        fonctionspropres = fdobj.copy()
+        bj = np.linalg.solve(Wlist['W_m'].astype(float), np.eye(Wlist['W_m'].shape[0]))@vecteurs_propres
         fonctionspropres.coefficients = bj
 
-        scores = skfda.misc.inner_product_matrix(fdobj, fonctionspropres)
+        scores = skfda.misc.inner_product_matrix(temp.basis, fonctionspropres.basis)
         varprop = valeurs_propres / np.sum(valeurs_propres)
         pcafd = {'valeurs_propres': valeurs_propres, 'harmonic': fonctionspropres, 'scores': scores, 'covariance': cov, 'U':bj, 'meanfd': mean_fd}
 
     #Multivariate here
     else:
         mean_fd = {}
-
+        temp = fdobj.copy()
         for i in range(len(fdobj)):
             #TODO should we start indexing multivariate at 0? or at 1?
-            mean_fd[f'{i}'] = fdobj[f'{i}']
+            mean_fd[f'{i}'] = temp[f'{i}'].copy()
+
 
         for i in range(len(fdobj)):
             #Check this element-wise multiplication
-            coefmean = np.apply_along_axis(np.sum, axis=0, arr=((corI.T)@np.repeat(1,fdobj[f'{i}'].coefficients.shape[1]))*fdobj[f'{i}'].coefficients)/ np.sum(corI)
-            mean_fd[f'{i}'].coefficients = {'mean': coefmean}
+            coefmean = np.apply_along_axis(np.sum, axis=1, arr=np.atleast_2d(np.atleast_2d(np.atleast_2d(corI).T@np.atleast_2d(np.repeat(1, fdobj[f'{i}'].coefficients.shape[1]))).T * temp['f{i}'].coefficients.T)) / np.sum(corI)
+            mean_fd[f'{i}'].coefficients = coefmean
         
         #R transposes here
-        coef = fdobj['0'].coefficients
+        coef = temp['0'].coefficients.copy().T
 
         for i in range(1, len(fdobj)):
             #R transposes here
-            coef = np.c_[coef, fdobj[f'{i}'].coefficients]
+            coef = np.c_[coef, temp[f'{i}'].coefficients.copy().T]
 
-        temp = _T_repmat(np.sqrt(corI), n=coef.T.shape[0], p=1) * coef.T
-        mat_cov = np.inner(temp, temp) / np.sum(Ti)
+        rep = (_T_repmat(np.sqrt(corI), n=coef.shape[0], p=1) * coef).T
+        mat_cov = (rep.T@rep) / np.sum(Ti)
         cov = (Wlist['W_m']@ mat_cov)@(Wlist['W_m'].T)
 
-        valeurs = np.linalg.eig(cov)
-        valeurs_propres = valeurs.eigenvalues
-        vecteurs_propres = valeurs.eigenvectors
+        valeurs_propres, vecteurs_propres = np.linalg.eig(cov.astype(float))
 
-        bj = np.linalg.solve(Wlist['W_m'], np.eye(Wlist['W_m'].shape[0]))@vecteurs_propres
+        bj = np.linalg.solve(Wlist['W_m'].astype(float), np.eye(Wlist['W_m'].shape[0]))@vecteurs_propres
         fonctionspropres = fdobj['0']
         fonctionspropres.coefficients = bj
         scores = (coef@Wlist['W_m'])@bj
