@@ -434,68 +434,69 @@ def _T_initmypca_fd1(fdobj, Wlist, Ti):
         
     #Univariate here
     if type(fdobj) == skfda.FDataBasis:
-        mean_fd = fdobj
-        #TODO does pass by reference happen here like with lists?
-        coef = fdobj.coefficients
+        temp = fdobj.copy()
+        mean_fd = fdobj.copy()
+        coef = fdobj.coefficients.copy()
         #by default numpy cov function uses rows as variables and columns as observations, opposite to R
-        mat_cov = np.cor(m=coef, aweights=Ti, ddof=0, rowvar=False)
+        mat_cov = np.cov(m=coef, aweights=Ti, ddof=0, rowvar=False)
         #may need to try this with other params depending on how weights are passed in
         coefmean = np.average(coef, axis=0, weights=Ti)
         #Verify this
-        fdobj.coefficients = np.apply_along_axis(lambda col: col - coefmean, axis=0, arr=fdobj.coefficients)
-
+        temp.coefficients = np.apply_along_axis(lambda row: row - coefmean, axis=1, arr=temp.coefficients)
         #Replaces as.matrix(data.frame(mean=coefmean))
-        mean_fd.coefficients = {'mean':coefmean}
+        mean_fd.coefficients = coefmean
         cov = (Wlist['W_m']@mat_cov)@(Wlist['W_m'].T)
 
-        valeurs = np.linalg.eig(cov)
-        valeurs_propres = valeurs.eigenvalues
-        vecteurs_propres = valeurs.eigenvectors
-        fonctionspropres = fdobj
-        bj = np.linalg.solve(Wlist['W_m'], np.eye(Wlist['W_m'].shape[0]))@vecteurs_propres
+        valeurs_propres, vecteurs_propres = np.linalg.eig(cov.astype(float))
+        fonctionspropres = fdobj.copy()
+        bj = np.linalg.solve(Wlist['W_m'].astype(float), np.eye(Wlist['W_m'].shape[0]).astype(float))@vecteurs_propres
         fonctionspropres.coefficients = bj
 
-        scores = skfda.misc.inner_product_matrix(fdobj, fonctionspropres)
+        scores = skfda.misc.inner_product_matrix(temp.basis, fonctionspropres.basis)
         varprop = valeurs_propres / np.sum(valeurs_propres)
         ipcafd = {'valeurs_propres': valeurs_propres, 'harmonic': fonctionspropres, 'scores': scores, 'covariance': cov, 'U':bj, 'meanfd': mean_fd, 'mux': coefmean}
 
     #Multivariate
     else:
         mean_fd = {}
+        temp = fdobj.copy()
         for i in range(len(fdobj)):
+
             #TODO Start at 0? or should we start at 1?
-            mean_fd[f'{i}'] = fdobj[f'{i}']
+            mean_fd[f'{i}'] = temp[f'{i}'].copy()
 
-        coef = fdobj['0'].coefficients
-
+        coef = temp['0'].coefficients
         for i in range(1, len(fdobj)):
-            coef = np.c_[coef, fdobj[f'{i}'].coefficients]
+            coef = np.c_[coef, temp[f'{i}'].coefficients.copy()]
 
-        mat_cov = np.cor(m=coef, aweights=Ti, ddof=0, rowvar=False)
+        #print(coef)
+        mat_cov = np.cov(m=coef, aweights=Ti, ddof=0, rowvar=False)
         coefmean = np.average(coef, axis=0, weights=Ti)
 
         n_lead = 0
         #R Doesn't transpose this here, might need shape[1] instead
-        n_var = fdobj['0'].coefficients.shape[0]
+        n_var = temp['0'].coefficients.shape[1]
         #Sweep
-        fdobj['0'].coefficients = np.apply_along_axis(lambda col: col - coefmean[(n_lead + 1):(n_var + n_lead)], axis=0, arr=fdobj['0'].coefficients)
+        tempi = temp['0'].copy()
+        tempi.coefficients = np.apply_along_axis(lambda row: row - coefmean[(n_lead):(n_var + n_lead)], axis=1, arr=tempi.coefficients)
 
-        mean_fd['0'].coefficients = {'mean': coefmean[(n_lead + 1):(n_var + n_lead)]}
+        mean_fd['0'].coefficients = coefmean[(n_lead):(n_var + n_lead)]
 
         for i in range(1, len(fdobj)):
+            tempi = temp[f'{i}'].copy()
             n_lead = n_lead + n_var
             #R doesn't transpose this here, might need shape[1] instead
-            n_var = fdobj[f'{i}'].coefficients.shape[0]
-            fdobj[f'{i}'].coefficients = {'mean': coefmean[(n_lead + 1):(n_var + n_lead)]}
+            #print(temp[f'{i}'].coefficients)
+            n_var = temp[f'{i}'].coefficients.shape[1]
+            tempi.coefficients = np.apply_along_axis(lambda row: row - coefmean[(n_lead):(n_var + n_lead)], axis=1, arr=tempi.coefficients)
+            mean_fd[f'{i}'].coefficients = coefmean[(n_lead):(n_var + n_lead)]
 
         cov = (Wlist['W_m']@mat_cov)@(Wlist['W_m'].T)
-        valeurs = np.linalg.eig(cov)
-        valeurs_propres = valeurs.eigenvalues
-        vecteurs_propres = valeurs.eigenvectors
-        bj = np.linalg.solve(Wlist['W_m'], np.eye(Wlist['W_m'].shape[0]))@vecteurs_propres
-        fonctionspropres = fdobj['0']
-        fonctionspropres.coefficients
-        scores = (coef@Wlist['W_m'])@bj
+        valeurs_propres, vecteurs_propres = np.linalg.eig(cov.astype(float))
+        bj = np.linalg.solve(Wlist['W_m'].astype(float), np.eye(Wlist['W_m'].shape[0]).astype(float))@vecteurs_propres
+        fonctionspropres = temp['0'].copy()
+        fonctionspropres.coefficients = bj
+        scores = (coef@Wlist['W'])@bj
 
         varprop = valeurs_propres / np.sum(valeurs_propres)
 
@@ -504,6 +505,7 @@ def _T_initmypca_fd1(fdobj, Wlist, Ti):
                   'meanfd': mean_fd, 'mux': coefmean}
 
     return ipcafd
+
 
 # Why not just pass in x instead of fdobj?
 def _T_funhddt_twinit(fdobj, wlist, par, nux):
