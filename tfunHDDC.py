@@ -317,10 +317,10 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
         #R uses rep.int here: does it matter?
         nux = np.rep(dfstart, K)
         #call to init function here
-        #initx = ._T_funhddt_init
+        initx = _T_funhddt_init(fdobj, wlist, K, t, nux, model, threshold, method, noise_ctrl, com_dim, d_max, d_set)
         
         #call to twinit function here
-        tw = _T_funhddt_twinit
+        tw = _T_funhddt_twinit(fdobj, wlist, initx, nux)
 
         #I indexes lists later on, should it be -1? it is 0 in R
         I = 0
@@ -431,7 +431,8 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
         return params
 
 def _T_funhddt_init(fdobj, Wlist, K, t, nux, model, threshold, method, noise_ctrl, com_dim, d_max, d_set):
-
+    if com_dim == None:
+        com_dim = False
     if(type(fdobj) == skfda.FDataBasis or type(fdobj) == skfda.FDataGrid):
         x = fdobj.coefficients
 
@@ -446,19 +447,19 @@ def _T_funhddt_init(fdobj, Wlist, K, t, nux, model, threshold, method, noise_ctr
 
     N = x.shape[0]
     p = x.shape[1]
-    n = np.sum(t, axis=1)
+    n = np.sum(t, axis=0)
 
     prop = n/N
 
-    mu = np.repeat(0, K*p).reshape((K, p))
+    mu = np.repeat(0., K*p).reshape((K, p))
     ind = np.apply_along_axis(np.nonzero, 1, t>0)
-    n_bis = np.repeat(0, K)
+    n_bis = np.repeat(0., K)
 
     for i in range(K):
         n_bis[i] = len(ind[i])
 
-    traceVect = np.repeat(0, K)
-    ev = np.repeat(0, K*p).reshape((K, p))
+    traceVect = np.repeat(0., K)
+    ev = np.repeat(0., K*p).reshape((K, p))
     Q = {}
     fpcaobj = {}
 
@@ -475,10 +476,11 @@ def _T_funhddt_init(fdobj, Wlist, K, t, nux, model, threshold, method, noise_ctr
         d = np.repeat(com_dim, K)
 
     elif np.isin(model, np.array(["AKJBKQKD", "AKBKQKD", "ABKQKD", "AKJBQKD", "AKBQKD", "ABQKD"])):
-        dmax = np.min(np.apply_along_axis(np.argmax, 1, (ev>noise_ctrl)*np.repeat(np.arange(0, ev.shape[1])))) - 1
-        if com_dim > dmax:
-            com_dim = np.max(dmax, 1)
-        d = np.rep(com_dim, K)
+        dmax = np.min(np.apply_along_axis(np.argmax, 1, (ev>noise_ctrl)*np.repeat(np.arange(0, ev.shape[1]), K).reshape((K, p)))) - 1
+        if com_dim != False:
+            if com_dim > dmax:
+                com_dim = np.max(dmax, 1)
+        d = np.repeat(com_dim, K)
 
     else:
         d = _T_hdclassif_dim_choice(ev, n, method, threshold, False, noise_ctrl, d_set)
@@ -486,57 +488,56 @@ def _T_funhddt_init(fdobj, Wlist, K, t, nux, model, threshold, method, noise_ctr
     Q1 = Q.copy()
     
     for i in range(K):
-        #TODO length of matrcies may not match R
-        Q[f'{i}'] = Q[f'{i}'][:, 0:d[i]]
+        Q[f'{i}'] = Q[f'{i}'][:, 0:d[i]+1]
 
-    ai = np.repeat(np.NaN, K*np.max(d)).reshape((K, np.max(d)))
+    ai = np.repeat(np.NaN, K*(np.max(d)+1)).reshape((K, (np.max(d)+1)))
     if np.isin(model, np.array(['AKJBKQKDK', 'AKJBQKDK', 'AKJBKQKD', 'AKJBQKD'])):
         for i in range(K):
-            ai[i, 0:d[i]] = ev[i, 0:d[i]]
+            print(ev)
+            ai[i, 0:d[i]+1] = ev[i, 0:d[i]+1]
 
     elif np.isin(model, np.array(['AKBKQKDK', 'AKBQKDK', 'AKBKQKD', 'AKBQKD'])):
         for i in range(K):
-            ai[i] = np.repeat(np.sum(ev[i, 0:d[i]])/d[i], np.max(d))
+            ai[i] = np.repeat(np.sum(ev[i, 0:d[i]+1])/(d[i]+1), np.max(d)+1)
 
     elif model == "AJBQD":
         for i in range(K):
-            ai[i] = ev[0:d[1]]
+            ai[i] = ev[0:d[1]+1]
     
     elif model == "ABQD":
         #TODO check if the sum is returning a vector or a number
-        ai = np.repeat(np.sum(ev[1:d[1]]/d[1]), K*np.max(d)).reshape((K, np.max(d)))
+        ai = np.repeat(np.sum(ev[0:d[1]+1]/(d[1]+1)), K*(np.max(d)+1)).reshape((K, np.max(d)+1))
 
     else:
         a = 0
-        eps = np.sum(prop*d)
+        eps = np.sum(prop*(d+1))
 
         for i in range(K):
-            a += (np.sum(ev[i, 0:d[i]])*prop[i])
-            ai = np.full((K, max(d)), a/eps)
+            a += (np.sum(ev[i, 0:d[i]+1])*prop[i])
+            ai = np.full((K, max(d)+1), a/eps)
 
     bi = np.zeros(K)
-    denom = np.min(N, p)
+    #Not used
+    #denom = np.min(N, p)
     if np.isin(model, np.array(['AKJBKQKDK', 'AKBKQKDK', 'ABKQKDK', 'AKJBKQKD', 'AKBKQKD', 'ABKQKD'])):
         for i in range(K):
-            remainEV = traceVect[i] - np.sum(ev[i, 0:d[i]])
+            remainEV = traceVect[i] - np.sum(ev[i, 0:d[i]+1])
 
-            bi[i] = remainEV/(p-d[i])
+            bi[i] = remainEV/(p-d[i]-1)
 
     else:
         b = 0
-        eps = np.sum(prop*d)
+        eps = np.sum(prop*(d+1))
 
         for i in range(K):
-            remainEV = traceVect[i] - np.sum(ev[i, 0:d[i]])
+            remainEV = traceVect[i] - np.sum(ev[i, 0:d[i]+1])
 
             b += (remainEV*prop[i])
 
-        bi[0:K] = b/(np.min(N, p) - eps)
+        bi[0:K] = b/(min(N, p) - eps)
 
     return {'model': model, "K": K, 'd':d, 'a':ai, 'b':bi, 'mu':mu, 'prop':prop,
             'nux':nux, 'ev':ev, 'Q':Q, 'fpcaobj': fpcaobj, 'Q1':Q1}
-
-
 def _T_initmypca_fd1(fdobj, Wlist, Ti):
         
     #Univariate here
