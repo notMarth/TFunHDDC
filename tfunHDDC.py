@@ -431,6 +431,7 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
         return params
 
 def _T_funhddt_init(fdobj, Wlist, K, t, nux, model, threshold, method, noise_ctrl, com_dim, d_max, d_set):
+
     if com_dim == None:
         com_dim = False
     if(type(fdobj) == skfda.FDataBasis or type(fdobj) == skfda.FDataGrid):
@@ -538,6 +539,7 @@ def _T_funhddt_init(fdobj, Wlist, K, t, nux, model, threshold, method, noise_ctr
 
     return {'model': model, "K": K, 'd':d, 'a':ai, 'b':bi, 'mu':mu, 'prop':prop,
             'nux':nux, 'ev':ev, 'Q':Q, 'fpcaobj': fpcaobj, 'Q1':Q1}
+
 def _T_initmypca_fd1(fdobj, Wlist, Ti):
         
     #Univariate here
@@ -783,8 +785,8 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
     n = np.sum(t, axis=0)
     prop = n/N
     #matrix with K columns and p rows
-    mu = np.repeat(None, K*p).reshape((K, p))
-    mu1 = np.repeat(None, K*p).reshape((K, p))
+    mu = np.repeat(0., K*p).reshape((K, p))
+    mu1 = np.repeat(0., K*p).reshape((K, p))
 
     #This is in R code but just gets overwritten later
     #corX = np.repeat(0, N*K).reshape((N, K))
@@ -793,16 +795,15 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
     corX = t*tw
 
     for i in range(0, K):
-        #Verify calculation in apply
-        mu[i] = np.apply_along_axis(sum,1,(np.matmul(corX[:,i], np.repeat(1, p)).T)*(x.T))/np.sum(corX[:,i])
-        mu1[i] = np.sum(corX[:,i]*x, axis=0)/np.sum(corX[:,i])
+        mu[i] = np.apply_along_axis(np.sum,1,np.atleast_2d(np.atleast_2d(corX[:, i]).T@np.atleast_2d(np.repeat(1,p))).T * x.T)  / np.sum(corX[:,i])
+        mu1[i] = np.sum(np.atleast_2d(corX[:,i])*x.T, axis=1)/np.sum(corX[:,i])
 
-    ind = np.apply_along_axis(np.where, 0, t>0)
+    ind = np.apply_along_axis(np.where, 1, t>0)
     
     n_bis = np.arange(0,K)
     for i in range(0,K):
         #verify this is the same in R code. Should be, since [[i]] acceses the list item i
-        n_bis[i] = len(ind[f'{i}'])
+        n_bis[i] = len(ind[i])
 
     match dfupdate:
         case "approx":
@@ -817,12 +818,12 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
             jk681 = _T_tyxf7(dfconstr, nux, n, t, tw, K, p, N)
             testing = jk681
             if np.all(np.isfinite(testing)):
-                nux = jk861
+                nux = jk681
 
 
     traceVect = np.zeros(K)
 
-    ev = np.repeat(0, K*p).reshape((K,p))
+    ev = np.repeat(0., K*p).reshape((K,p))
     #try dictionary here
     Q = {}
     fpcaobj = {}
@@ -830,57 +831,39 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
     for i in range(0, K):
         donnees = _T_mypcat_fd1(fdobj, Wlist, t[:,i], corX[:,i])
         #What is the context for the diag call in R? (ie. what data type is diag being called on)
-        traceVect[i] = sum(np.diag(donnees['valerus_propres']))
-        ev[i] = donnees['valerus_propres']
+        traceVect[i] = np.sum(np.diag(donnees['valeurs_propres']))
+        ev[i] = donnees['valeurs_propres']
         Q[f'{i}'] = donnees['U']
         fpcaobj[f'{i}'] = donnees
 
+    d = _T_hdclassif_dim_choice(ev, n, method, threshold, False, noise_ctrl, d_set)
+    d+=1
 
-    if model in ["AJBQD", "ABQD"]:
-        d = np.repeat(com_dim, K)
-
-    elif model in ["AKJBKQKD", "AKBKQKD", "ABKQKD", "AKJBQKD", "AKBQKD", "ABQKD"]:
-        #rep using each=K gives the same result as np.repeat normally when repeating K times
-        dmax = np.min(np.apply_along_axis(np.argmax, 1, (ev>noise_ctrl)*np.repeat(np.arange(0, ev.shape[1]), K)))
-        if com_dim > dmax:
-            com_dim = max(dmax, 1)
-        d = np.repeat(com_dim, K)
-    else:
-        d = _T_hdclassif_dim_choice(ev, n, method, threshold, False, noise_ctrl, d_set)
-
-    Q1 = Q
+    Q1 = Q.copy()
     for i in range(0, K):
         # verify that in R, matrix(Q[[i]]... ) just constructs a matrix with same dimenstions as Q[[i]]...
         Q[f'{i}'] = Q[f'{i}'][:,0:d[i]]
 
-    ai = np.repeat(None, K*np.max(d))
-    if model in ['AKJBKQKDK', 'AKJBQKDK', 'AKJBKQKD', 'AKJBQKD']:
+    ai = np.repeat(np.NaN, K*np.max(d)).reshape((K, np.max(d)))
+    if model in ['AKJBKQKDK', 'AKJBQKDK']:
         for i in range(0, K):
             ai[i, 0:d[i]] = ev[i, 0:d[i]]
 
-    elif model in ['AKBKQKDK', 'AKBQKDK', 'AKBKQKD', 'AKBQKD']:
+    elif model in ['AKBKQKDK', 'AKBQKDK']:
         for i in range(0, K):
             ai[i] = np.repeat(np.sum(ev[i, 0:d[i]]/d[i]), np.max(d))
-
-    elif model == 'AJBQD':#LINE 1256
-        for i in range(K):
-            ai[i] = ev[0:d[0]]
-
-    #Verify if replacement length is an issue
-    elif model == "ABQD":
-        ai = np.sum(ev[0:d[0]])/d[0]
 
     else:
         a = 0
         eps = np.sum(prop*d)
         for i in range(K):
             a = a + np.sum(ev[i, 0:d[i]]) * prop[i]
-        ai = np.repeat(a/eps, K*max(d)).reshape((K, max(d)))
+        ai = np.repeat(a/eps, K*np.max(d)).reshape((K, np.max(d)))
 
     
-    bi = np.repeat(None)
-    denom = np.min(N, p)
-    if model in ['AKJBKQKDK', 'AKBKQKDK', 'ABKQKDK', 'AKJBKQKD', 'AKBKQKD', 'ABKQKD']:
+    bi = np.repeat(None, K)
+    denom = min(N, p)
+    if model in ['AKJBKQKDK', 'AKBKQKDK', 'ABKQKDK']:
         for i in range(K):
             remainEV = traceVect[i] - np.sum(ev[i, 0:d[i]])
             bi[i] = remainEV/(p-d[i])
@@ -891,7 +874,7 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
         for i in range(K):
             remainEV = traceVect[i] - np.sum(ev[i, 0:d[i]])
             b = b+remainEV*prop[i]
-        bi[0:K] = b/(np.min(N,p)-eps)
+        bi[0:K] = b/(min(N,p)-eps)
 
 
     result = {'model':model, "K": K, "d":d, "a":ai, "b": bi, "mu":mu, "prop": prop, "nux":nux, "ev":ev, "Q":Q, "fpcaobj":fpcaobj, "Q1":Q1}
