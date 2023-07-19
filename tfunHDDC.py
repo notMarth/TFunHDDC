@@ -763,22 +763,20 @@ def _T_funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
 
 def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model, 
                        threshold, method, noise_ctrl, com_dim, d_max, d_set):
-    
-    #try this if fdobj is an fdata (Univariate only right now)
-    if(type(fdobj) == skfda.FDataBasis or type(fdobj == skfda.FDataGrid)):
+
+    #Univariate Case    
+    if(type(fdobj) == skfda.FDataBasis):
         x = fdobj.coefficients
 
-    #For R testing if fdobj gets passed as a dict
-    #Should also work for dataframe (converts to pandas dataframe)
     if type(fdobj) == dict:
-        #Multivariate
-        if len(x.keys() > 1):
+        #Multivariate case
+        if len(fdobj.keys() > 1):
             x = fdobj[0].coefficients
             for i in range(0, len(fdobj)):
                 x = np.c_[x, fdobj[f'{i}'].coefficients]
-        #univariate
+        #univariate but as dict
         else:
-            x = fdobj.coeficients
+            x = fdobj[0].coeficients
 
     N = x.shape[0]
     p = x.shape[1]
@@ -788,10 +786,6 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
     mu = np.repeat(0., K*p).reshape((K, p))
     mu1 = np.repeat(0., K*p).reshape((K, p))
 
-    #This is in R code but just gets overwritten later
-    #corX = np.repeat(0, N*K).reshape((N, K))
-
-    #TODO Verify if this is matrix multiplication (better to be safe using matmul)
     corX = t*tw
 
     for i in range(0, K):
@@ -805,16 +799,16 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
         #verify this is the same in R code. Should be, since [[i]] acceses the list item i
         n_bis[i] = len(ind[i])
 
+
     match dfupdate:
+
         case "approx":
-            #TODO add try/catch to this like in R
             jk861 = _T_tyxf8(dfconstr, nux, n, t, tw, K, p, N)
             testing = jk861
             if np.all(np.isfinite(testing)):
                 nux = jk861
         
         case "numeric":
-            #TODO add try/catch to this like in R
             jk681 = _T_tyxf7(dfconstr, nux, n, t, tw, K, p, N)
             testing = jk681
             if np.all(np.isfinite(testing)):
@@ -824,25 +818,31 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
     traceVect = np.zeros(K)
 
     ev = np.repeat(0., K*p).reshape((K,p))
-    #try dictionary here
+
     Q = {}
     fpcaobj = {}
 
     for i in range(0, K):
         donnees = _T_mypcat_fd1(fdobj, Wlist, t[:,i], corX[:,i])
-        #What is the context for the diag call in R? (ie. what data type is diag being called on)
         traceVect[i] = np.sum(np.diag(donnees['valeurs_propres']))
         ev[i] = donnees['valeurs_propres']
         Q[f'{i}'] = donnees['U']
         fpcaobj[f'{i}'] = donnees
 
+    #Intrinsic dimensions selection
+
     d = _T_hdclassif_dim_choice(ev, n, method, threshold, False, noise_ctrl, d_set)
+    #correct for Python indices
     d+=1
+
+    #Setup Qi matrices
 
     Q1 = Q.copy()
     for i in range(0, K):
         # verify that in R, matrix(Q[[i]]... ) just constructs a matrix with same dimenstions as Q[[i]]...
         Q[f'{i}'] = Q[f'{i}'][:,0:d[i]]
+
+    #Parameter a
 
     ai = np.repeat(np.NaN, K*np.max(d)).reshape((K, np.max(d)))
     if model in ['AKJBKQKDK', 'AKJBQKDK']:
@@ -860,9 +860,9 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
             a = a + np.sum(ev[i, 0:d[i]]) * prop[i]
         ai = np.repeat(a/eps, K*np.max(d)).reshape((K, np.max(d)))
 
-    
+    #Parameter b
+
     bi = np.repeat(None, K)
-    denom = min(N, p)
     if model in ['AKJBKQKDK', 'AKBKQKDK', 'ABKQKDK']:
         for i in range(K):
             remainEV = traceVect[i] - np.sum(ev[i, 0:d[i]])
@@ -937,8 +937,6 @@ def _T_tyxf8(dfconstr, nux, n, t, tw, K, p, N):
             constn = 1 + (1 / n[i]) * np.sum(t[:, i] * (np.log(tw[:, i]) - tw[:, i])) + scip.digamma((dfoldg[i] + p)/2) - np.log( (dfoldg[i] + p)/2)
             temp = scip.digamma((dfoldg[i] + p)/2)
             
-            #print((dfoldg[i]+p)/2)
-            #print(f'digamma 8 value:{temp}')
             constn = -constn
             newnux[i] = (-np.exp(constn) + 2 * (np.exp(constn)) * (np.exp(scip.digamma(dfoldg[i] / 2)) - ( (dfoldg[i]/2) - (1/2)))) / (1 - np.exp(constn))
 
