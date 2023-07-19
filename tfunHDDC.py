@@ -900,6 +900,7 @@ def _T_tyxf7(dfconstr, nux, n, t, tw, K, p, N):
             temp = scip.digamma((dfoldg[i] + p)/2)
             
             f = lambda v : np.log(v/2) - scip.digamma(v/2) + constn
+            #Verify this outputs the same as R: may need to set rtol to 0
             newnux[i] = scio.brentq(f, 0.0001, 1000, xtol=0.00001)
 
             if newnux[i] > 200:
@@ -912,8 +913,8 @@ def _T_tyxf7(dfconstr, nux, n, t, tw, K, p, N):
         dfoldg = nux[0]
         constn = 1 + (1/N) * np.sum(t *(np.log(tw) - tw)) + scip.digamma( (dfoldg + p) / 2) - np.log( (dfoldg + p) / 2)
 
-        print(constn)
         f = lambda v : np.log(v/2) - scip.digamma(v/2) + constn
+            #Verify this outputs the same as R: may need to set rtol to 0
         dfsamenewg = scio.brentq(f, 0.0001, 1000, xtol=0.01)
 
         if dfsamenewg > 200:
@@ -934,6 +935,10 @@ def _T_tyxf8(dfconstr, nux, n, t, tw, K, p, N):
         
         for i in range(0, K):
             constn = 1 + (1 / n[i]) * np.sum(t[:, i] * (np.log(tw[:, i]) - tw[:, i])) + scip.digamma((dfoldg[i] + p)/2) - np.log( (dfoldg[i] + p)/2)
+            temp = scip.digamma((dfoldg[i] + p)/2)
+            
+            #print((dfoldg[i]+p)/2)
+            #print(f'digamma 8 value:{temp}')
             constn = -constn
             newnux[i] = (-np.exp(constn) + 2 * (np.exp(constn)) * (np.exp(scip.digamma(dfoldg[i] / 2)) - ( (dfoldg[i]/2) - (1/2)))) / (1 - np.exp(constn))
 
