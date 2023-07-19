@@ -432,16 +432,14 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
 
 def _T_funhddt_init(fdobj, Wlist, K, t, nux, model, threshold, method, noise_ctrl, com_dim, d_max, d_set):
 
-    if com_dim == None:
-        com_dim = False
-    if(type(fdobj) == skfda.FDataBasis or type(fdobj) == skfda.FDataGrid):
+    #univariate case
+    if(type(fdobj) == skfda.FDataBasis):
         x = fdobj.coefficients
 
-    #For R testing if fdobj gets passed as a dict
-    #Should also work for dataframe (converts to pandas dataframe)
+    
     if type(fdobj) == dict or type(fdobj) == pd.DataFrame:
         #Multivariate
-        if len(x.keys() > 1):
+        if len(fdobj.keys() > 1):
             x = fdobj[0].coefficients
             for i in range(0, len(fdobj)):
                 x = np.c_[x, fdobj[f'{i}'].coefficients]
@@ -473,65 +471,56 @@ def _T_funhddt_init(fdobj, Wlist, K, t, nux, model, threshold, method, noise_ctr
         Q[f'{i}'] = donnees["U"]
         fpcaobj[f"{i}"] = donnees
 
-    if np.isin(model, np.array(["AJBQD", "ABQD"])):
-        d = np.repeat(com_dim, K)
+    
+    #Intrinsic dimension selection
+    d = _T_hdclassif_dim_choice(ev, n, method, threshold, False, noise_ctrl, d_set)
+    #adjust for Python indices
+    d+=1
 
-    elif np.isin(model, np.array(["AKJBKQKD", "AKBKQKD", "ABKQKD", "AKJBQKD", "AKBQKD", "ABQKD"])):
-        dmax = np.min(np.apply_along_axis(np.argmax, 1, (ev>noise_ctrl)*np.repeat(np.arange(0, ev.shape[1]), K).reshape((K, p)))) - 1
-        if com_dim != False:
-            if com_dim > dmax:
-                com_dim = np.max(dmax, 1)
-        d = np.repeat(com_dim, K)
-
-    else:
-        d = _T_hdclassif_dim_choice(ev, n, method, threshold, False, noise_ctrl, d_set)
-
+    #Set up Qi matrices
     Q1 = Q.copy()
     
     for i in range(K):
         Q[f'{i}'] = Q[f'{i}'][:, 0:d[i]+1]
 
-    ai = np.repeat(np.NaN, K*(np.max(d)+1)).reshape((K, (np.max(d)+1)))
-    if np.isin(model, np.array(['AKJBKQKDK', 'AKJBQKDK', 'AKJBKQKD', 'AKJBQKD'])):
+    #a parameter
+
+    ai = np.repeat(np.NaN, K*(np.max(d))).reshape((K, (np.max(d))))
+    if np.isin(model, np.array(['AKJBKQKDK', 'AKJBQKDK'])):
         for i in range(K):
             print(ev)
-            ai[i, 0:d[i]+1] = ev[i, 0:d[i]+1]
+            ai[i, 0:d[i]] = ev[i, 0:d[i]]
 
-    elif np.isin(model, np.array(['AKBKQKDK', 'AKBQKDK', 'AKBKQKD', 'AKBQKD'])):
+    elif np.isin(model, np.array(['AKBKQKDK', 'AKBQKDK'])):
         for i in range(K):
-            ai[i] = np.repeat(np.sum(ev[i, 0:d[i]+1])/(d[i]+1), np.max(d)+1)
-
-    elif model == "AJBQD":
-        for i in range(K):
-            ai[i] = ev[0:d[1]+1]
-    
-    elif model == "ABQD":
-        #TODO check if the sum is returning a vector or a number
-        ai = np.repeat(np.sum(ev[0:d[1]+1]/(d[1]+1)), K*(np.max(d)+1)).reshape((K, np.max(d)+1))
+            ai[i] = np.repeat(np.sum(ev[i, 0:d[i]])/(d[i]), np.max(d))
 
     else:
         a = 0
-        eps = np.sum(prop*(d+1))
+        eps = np.sum(prop*(d))
 
         for i in range(K):
-            a += (np.sum(ev[i, 0:d[i]+1])*prop[i])
-            ai = np.full((K, max(d)+1), a/eps)
+            a += (np.sum(ev[i, 0:d[i]])*prop[i])
+            ai = np.full((K, max(d)), a/eps)
+
+
+    
+    #b parameter
 
     bi = np.zeros(K)
-    #Not used
-    #denom = np.min(N, p)
-    if np.isin(model, np.array(['AKJBKQKDK', 'AKBKQKDK', 'ABKQKDK', 'AKJBKQKD', 'AKBKQKD', 'ABKQKD'])):
+  
+    if np.isin(model, np.array(['AKJBKQKDK', 'AKBKQKDK', 'ABKQKDK'])):
         for i in range(K):
-            remainEV = traceVect[i] - np.sum(ev[i, 0:d[i]+1])
+            remainEV = traceVect[i] - np.sum(ev[i, 0:d[i]])
 
-            bi[i] = remainEV/(p-d[i]-1)
+            bi[i] = remainEV/(p-d[i])
 
     else:
         b = 0
-        eps = np.sum(prop*(d+1))
+        eps = np.sum(prop*(d))
 
         for i in range(K):
-            remainEV = traceVect[i] - np.sum(ev[i, 0:d[i]+1])
+            remainEV = traceVect[i] - np.sum(ev[i, 0:d[i]])
 
             b += (remainEV*prop[i])
 
