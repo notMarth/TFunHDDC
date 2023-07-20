@@ -1249,41 +1249,48 @@ def _T_hdc_getComplexityt(par, p, dfconstr):
 def _T_hdc_getTheModel(model, all2models = False):
     
     model_in = model
+    #is the model a list or array?
     try:
-        new_model = np.array(model,dtype='<U10')
+        new_model = np.array(model,dtype='<U9')
         model = np.array(model)
     except:
         raise ValueError("Model needs to be an array or list")
 
+    #one-dimensional please
     if(model.ndim > 1):
         raise ValueError("The argument 'model' must be 1-dimensional")
     
+    #check for invalid values
     if type(model[0]) != np.str_:
         if np.any(np.apply_along_axis(np.isnan, 0, model)):
             raise ValueError("The argument 'model' cannot contain any Nan")
 
-    ModelNames = np.array(["AKJBKQKDK", "AKBKQKDK", "ABKQKDK", "AKJBQKDK", "AKBQKDK", "ABQKDK", "AKJBKQKD", "AKBKQKD", "ABKQKD", "AKJBQKD", "AKBQKD", "ABQKD"])
+    #List of model names accepted
+    ModelNames = np.array(["AKJBKQKDK", "AKBKQKDK", "ABKQKDK", "AKJBQKDK", "AKBQKDK", "ABQKDK"])
+    #numbers between 0 and 5 inclusive are accepted, so check if numbers are
+    #sent in as a string before capitalizing
     if type(model[0]) == np.str_:
         if model[0].isnumeric():
             model = model.astype(np.int_)
-            #print(model)
+            
         else:
             new_model = [np.char.upper(m) for m in model]
 
+    #shortcut for all the models
     if len(model) == 1 and new_model[0] == "ALL":
         if all2models:
-            model = np.arange(0, 14)
-            new_model = np.arange(0,14)
+            model = np.arange(0, 6)
+            new_model = np.arange(0,6)
         else:
             return "ALL"
         
+    #are the models numbers?
     if type(model[0]) == np.int_:
-        #print(model)
         qui = np.nonzero(np.isin(model, np.arange(0, 14)))[0]
         if len(qui) > 0:
             new_model[qui] = ModelNames[model[qui]]
-        #print(new_model)
-        
+
+    #find model names that are incorrect    
     qui = np.nonzero( np.invert(np.isin(new_model, ModelNames)))[0]
     if len(qui) > 0:
         if len(qui) == 1:
@@ -1294,6 +1301,7 @@ def _T_hdc_getTheModel(model, all2models = False):
 
         raise ValueError("Invalid model name " + msg)
     
+    #Warn user that the models *should* be unique
     if np.max(np.unique(model, return_counts=True)[1]) > 1:
         warnings.warn("Values in 'model' argument should be unique.", UserWarning)
 
