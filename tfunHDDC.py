@@ -54,11 +54,162 @@ class _Table:
             self.data.T[[ind2, ind1]] = self.data.T[[ind1, ind2]]
             self.colnames[[ind2, ind1]] = self.colnames[[ind1, ind2]]
     
+class TFunHDDC:
+
+    def __init__(self, Wlist, model, K, d, a, b, mu, prop, nux, ev, Q, Q1,
+                 fpca, loglik, loglik_all, posterior, cls, com_ev, N,
+                 complexity, threshold, d_select, converged):
+        self.Wlist = Wlist
+        self.model = model
+        self.K = K
+        self.d = d
+        self.a = a
+        self.b = b
+        self.mu = mu
+        self.prop = prop
+        self.nux = nux
+        self.ev = ev
+        self.Q=Q
+        self.Q1 = Q1
+        self.fpca = fpca
+        self.loglik = loglik
+        self.loglik_all = loglik_all
+        self.posterior = posterior
+        self.cls = self.cls
+        self.com_ev = com_ev
+        self.N = N
+        self.complexity = complexity
+        self.threshold=threshold
+        self.d_select=d_select
+        self.converged=converged
+
+    def predict(self, data):
+        #TODO check if data Null
+        #TODO figure out what .T_myCallAlerts is doing
+
+        #univariate
+        x = data.coefficients
+
+        Np = self.N
+
+        p = x.shape[1]
+        N = x.shape[0]
+        if Np != p:
+            raise ValueError("New observations should be represented using the same base as for the training set")
+        b = self.b.copy()
+        b[b<1.e-6] = 1.e-6
+
+        t = np.zeros((self.N, self.K))
+        mah_pen = np.zeros((self.N, self.K))
+        K_pen = np.zeros((self.N, self.K))
+        num = np.zeros((self.N, self.K))
+        s = np.repeat(0., self.K)
+
+        match self.model:
+            case 'AKJBKQKDK':
+                for i in range(self.K):
+                    s[i] = np.sum(np.log(self.a[i, 0:self.d[i]]))
+                    Qk = self.Q1[f'{i}']
+                    diag2 = np.repeat(1/b[i], self.p-self.d[i])
+                    diag1 = 1/self.a[i, 0:self.d[i]]
+                    aki = np.sqrt(np.diag(np.concatenate(diag1, diag2)))
+                    muki = self.mu[i]
+
+                    mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
+
+                    #scipy logamma vs math lgamma?
+                    K_pen[:, i] = np.log(self.prop[i]) + math.lgamma( (self.nux[i] + p) / 2) - (1/2) * (s[i] + (p-self.d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(self.nux[i])) + math.lgamma(self.nux[i] /2) + ( (self.nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / self.nux[i])))
+
+            case 'AKJBQKDK':
+                for i in range(self.K):
+                    s[i] = np.sum(np.log(self.a[i, 0:self.d[i]]))
+                    Qk =self.Q1[f'{i}']
+                    diag2 = np.repeat(1/b[0], self.p-self.d[i])
+                    diag1 = 1/self.a[i, 0:self.d[i]]
+                    aki = np.sqrt(np.diag(np.concatenate(diag1, diag2)))
+                    muki = self.mu[i]
+                    
+                    mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
+
+                    #Copied from previous case with b[i] changed to b[1]
+                    #scipy logamma vs math lgamma?
+                    K_pen[:, i] = np.log(self.prop[i]) + math.lgamma( (self.nux[i] + p) / 2) - (1/2) * (s[i] + (p-self.d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(self.nux[i])) + math.lgamma(self.nux[i] /2) + ( (self.nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / self.nux[i])))
+
+            case 'AKBKQKDK':
+                s[i] = self.d[i]*np.log(self.a[i])
+                Qk = self.Q1[f'{i}']
+                diag2 = np.repeat(1/b[i], self.p-self.d[i])
+                diag1 = np.repeat(1/self.a[i], self.d[i])
+                aki = np.sqrt(np.diag(np.concatenate(diag1, diag2)))
+                muki = self.mu[i]
+
+                mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
+
+                #copied from AKJBKQKDK
+                K_pen[:, i] = np.log(self.prop[i]) + math.lgamma( (self.nux[i] + p) / 2) - (1/2) * (s[i] + (p-self.d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(self.nux[i])) + math.lgamma(self.nux[i] /2) + ( (self.nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / self.nux[i])))
+
+
+            case 'ABKQKDK':
+                for i in range(self.K):
+                    s[i] = self.d[i]*np.log(self.a[0])
+                    Qk = self.Q1[f'{i}']
+                    diag2 = np.repeat(1/b[i], self.p-self.d[i])
+                    diag1 = np.repeat(1/self.a[0], self.d[i])
+                    aki = np.sqrt(np.diag(np.concatenate(diag1, diag2)))
+                    muki = self.mu[i]
+
+                    mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
+
+                    #copied from AKJBKQKDK
+                    K_pen[:, i] = np.log(self.prop[i]) + math.lgamma( (self.nux[i] + p) / 2) - (1/2) * (s[i] + (p-self.d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(self.nux[i])) + math.lgamma(self.nux[i] /2) + ( (self.nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / self.nux[i])))
+
+            case 'AKBQKDK':
+                s[i] = self.d[i]*np.log(self.a[i])
+                Qk = self.Q1[f'{i}']
+                diag2 = np.repeat(1/b[0], self.p-self.d[i])
+                diag1 = np.repeat(1/self.a[i], self.d[i])
+                aki = np.sqrt(np.diag(np.concatenate(diag1, diag2)))
+                muki = self.mu[i]
+
+                mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
+
+                #copied from AKJBKQKDK
+                K_pen[:, i] = np.log(self.prop[i]) + math.lgamma( (self.nux[i] + p) / 2) - (1/2) * (s[i] + (p-self.d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(self.nux[i])) + math.lgamma(self.nux[i] /2) + ( (self.nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / self.nux[i])))
+
+            case 'ABQKDK':
+                s[i] = self.d[i]*np.log(self.a[0])
+                Qk = self.Q1[f'{i}']
+                diag2 = np.repeat(1/b[0], self.p-self.d[i])
+                diag1 = np.repeat(1/self.a[0], self.d[i])
+                aki = np.sqrt(np.diag(np.concatenate(diag1, diag2)))
+                muki = self.mu[i]
+
+                mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
+
+                #copied from AKJBKQKDK
+                K_pen[:, i] = np.log(self.prop[i]) + math.lgamma( (self.nux[i] + p) / 2) - (1/2) * (s[i] + (p-self.d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(self.nux[i])) + math.lgamma(self.nux[i] /2) + ( (self.nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / self.nux[i])))
+
+        kcon = -np.apply_along_axis(np.max, 0, K_pen)
+        K_pen += kcon
+        num = np.exp(K_pen)
+        t = num / np.sum(num, axis=0)
+
+        cls = np.argmax(t, axis=1)
+        return {'t': t, 'class': cls}
+    
+    #Try returning models + diverged?
+    def __str__(self):
+        return None 
+    
+    #Try printing params?
+    def __repr__(self):
+        return None
+
 
 
 #TODO add default values
 #*args argument replaces ... in R code
-#fdobj should be a dictionary containing an FData object and optionally labels
+#fdobj should either be a FDataBasis object or a dictionary of FDataBasis objects
 def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
                      itermax, threshold, method, eps, init, init_vector,
                      mini_nb, min_individuals, noise_ctrl, com_dim,
@@ -67,19 +218,18 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
                   "ABQKDK", "AKJBKQKD", "AKBKQKD", "ABKQKD", "AKJBQKD",
                   "AKBQKD", "ABQKD"]
     
-    #try this if fdobj is an fdata (Univariate only right now)
-    if(type(fdobj) == skfda.FDataBasis or type(fdobj == skfda.FDataGrid)):
+    #Univariate
+    if(type(fdobj) == skfda.FDataBasis):
         data = fdobj.coefficients
 
-    #For R testing if fdobj gets passed as a dict
-    #Should also work for dataframe (converts to pandas dataframe)
+    
     if type(fdobj) == dict:
         #Multivariate
-        if len(data.keys() > 1):
+        if len(fdobj.keys() > 1):
             data = fdobj[0].coefficients
             for i in range(0, len(fdobj)):
                 data = np.c_[data, fdobj[f'{i}'].coefficients]
-        #univariate
+        #univariate in dict
         else:
             data = fdobj.coeficients
 
@@ -314,8 +464,9 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
                 if kno[i] == 1:
                     t[i, known[i]] = 1
 
-        #R uses rep.int here: does it matter?
+        #R uses rep.int here: does it matter? (shouldn't)
         nux = np.rep(dfstart, K)
+
         #call to init function here
         initx = _T_funhddt_init(fdobj, wlist, K, t, nux, model, threshold, method, noise_ctrl, com_dim, d_max, d_set)
         
@@ -1207,6 +1358,7 @@ def _T_hdclassift_bic(par, p, dfconstr):
 def _T_hdc_getComplexityt(par, p, dfconstr):
     model = par['model']
     K = par['K']
+    #d should already be adjusted for Python indices
     d = par['d']
 
     #These don't get used
@@ -1223,7 +1375,7 @@ def _T_hdc_getComplexityt(par, p, dfconstr):
 
     tot = np.sum(d*(p-(d+1)/2))
     D = np.sum(d)
-    d = d[0]
+    d = d[0] + 1
     to = d*(p-(d+1)/2)
 
     if model == 'AKJBKQKDK':
