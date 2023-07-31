@@ -1,16 +1,19 @@
 #Required Libraries------------------------------------------------------------#
 import skfda
-import sklearn
+from sklearn import cluster as clust
 from sklearn.utils import Bunch
 import numpy as np
 import warnings
 import pandas as pd
 import math
 import ctypes
+import timeit
+from scipy import linalg as scil
 import scipy.special as scip
 import scipy.optimize as scio
 #------------------------------------------------------------------------------#
-
+def check_symmetric(a, tol=1e-8):
+    return np.all(np.abs(a-a.T) < tol)
 
 class _Table:
     """
@@ -24,7 +27,7 @@ class _Table:
 
     
     """
-    def __init__(self, data, rownames, colnames):
+    def __init__(self, data=None, rownames=None, colnames=None):
         self.data = data
         self.rownames = rownames
         self.colnames = colnames
@@ -53,12 +56,25 @@ class _Table:
         else:
             self.data.T[[ind2, ind1]] = self.data.T[[ind1, ind2]]
             self.colnames[[ind2, ind1]] = self.colnames[[ind1, ind2]]
+
+    def __str__(self):
+        string = f'\t{self.colnames}\n'
+        for i in range(len(self.data)):
+            try:
+                string += f'{self.rownames[i]}\t{self.data[i]}\n'
+            except:
+                string += f'\t{self.data[i]}\n'
+
+        return string
+
+    def __len__(self):
+        return len(self.data)
     
 class TFunHDDC:
 
     def __init__(self, Wlist, model, K, d, a, b, mu, prop, nux, ev, Q, Q1,
-                 fpca, loglik, loglik_all, posterior, cls, com_ev, N,
-                 complexity, threshold, d_select, converged):
+                 fpca, loglik, loglik_all, posterior, cl, com_ev, N,
+                 complexity, threshold, d_select, converged, index, bic, icl):
         self.Wlist = Wlist
         self.model = model
         self.K = K
@@ -75,13 +91,16 @@ class TFunHDDC:
         self.loglik = loglik
         self.loglik_all = loglik_all
         self.posterior = posterior
-        self.cls = self.cls
+        self.cl = cl
         self.com_ev = com_ev
         self.N = N
         self.complexity = complexity
         self.threshold=threshold
         self.d_select=d_select
         self.converged=converged
+        self.index = index
+        self.bic = bic
+        self.icl = icl
 
     def predict(self, data):
         #TODO check if data Null
@@ -98,6 +117,7 @@ class TFunHDDC:
             raise ValueError("New observations should be represented using the same base as for the training set")
         b = self.b.copy()
         b[b<1.e-6] = 1.e-6
+        wki = self.Wlist['W_m']
 
         t = np.zeros((self.N, self.K))
         mah_pen = np.zeros((self.N, self.K))
@@ -118,7 +138,7 @@ class TFunHDDC:
                     mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
 
                     #scipy logamma vs math lgamma?
-                    K_pen[:, i] = np.log(self.prop[i]) + math.lgamma( (self.nux[i] + p) / 2) - (1/2) * (s[i] + (p-self.d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(self.nux[i])) + math.lgamma(self.nux[i] /2) + ( (self.nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / self.nux[i])))
+                    K_pen[:, i] = np.log(self.prop[i]) + scip.loggamma( (self.nux[i] + p) / 2) - (1/2) * (s[i] + (p-self.d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(self.nux[i])) + scip.loggamma(self.nux[i] /2) + ( (self.nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / self.nux[i])))
 
             case 'AKJBQKDK':
                 for i in range(self.K):
@@ -133,7 +153,7 @@ class TFunHDDC:
 
                     #Copied from previous case with b[i] changed to b[1]
                     #scipy logamma vs math lgamma?
-                    K_pen[:, i] = np.log(self.prop[i]) + math.lgamma( (self.nux[i] + p) / 2) - (1/2) * (s[i] + (p-self.d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(self.nux[i])) + math.lgamma(self.nux[i] /2) + ( (self.nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / self.nux[i])))
+                    K_pen[:, i] = np.log(self.prop[i]) + scip.loggamma( (self.nux[i] + p) / 2) - (1/2) * (s[i] + (p-self.d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(self.nux[i])) + scip.loggamma(self.nux[i] /2) + ( (self.nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / self.nux[i])))
 
             case 'AKBKQKDK':
                 s[i] = self.d[i]*np.log(self.a[i])
@@ -146,7 +166,7 @@ class TFunHDDC:
                 mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
 
                 #copied from AKJBKQKDK
-                K_pen[:, i] = np.log(self.prop[i]) + math.lgamma( (self.nux[i] + p) / 2) - (1/2) * (s[i] + (p-self.d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(self.nux[i])) + math.lgamma(self.nux[i] /2) + ( (self.nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / self.nux[i])))
+                K_pen[:, i] = np.log(self.prop[i]) + scip.loggamma( (self.nux[i] + p) / 2) - (1/2) * (s[i] + (p-self.d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(self.nux[i])) + scip.loggamma(self.nux[i] /2) + ( (self.nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / self.nux[i])))
 
 
             case 'ABKQKDK':
@@ -161,7 +181,7 @@ class TFunHDDC:
                     mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
 
                     #copied from AKJBKQKDK
-                    K_pen[:, i] = np.log(self.prop[i]) + math.lgamma( (self.nux[i] + p) / 2) - (1/2) * (s[i] + (p-self.d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(self.nux[i])) + math.lgamma(self.nux[i] /2) + ( (self.nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / self.nux[i])))
+                    K_pen[:, i] = np.log(self.prop[i]) + scip.loggamma( (self.nux[i] + p) / 2) - (1/2) * (s[i] + (p-self.d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(self.nux[i])) + scip.loggamma(self.nux[i] /2) + ( (self.nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / self.nux[i])))
 
             case 'AKBQKDK':
                 s[i] = self.d[i]*np.log(self.a[i])
@@ -174,7 +194,7 @@ class TFunHDDC:
                 mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
 
                 #copied from AKJBKQKDK
-                K_pen[:, i] = np.log(self.prop[i]) + math.lgamma( (self.nux[i] + p) / 2) - (1/2) * (s[i] + (p-self.d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(self.nux[i])) + math.lgamma(self.nux[i] /2) + ( (self.nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / self.nux[i])))
+                K_pen[:, i] = np.log(self.prop[i]) + scip.loggamma( (self.nux[i] + p) / 2) - (1/2) * (s[i] + (p-self.d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(self.nux[i])) + scip.loggamma(self.nux[i] /2) + ( (self.nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / self.nux[i])))
 
             case 'ABQKDK':
                 s[i] = self.d[i]*np.log(self.a[0])
@@ -187,7 +207,7 @@ class TFunHDDC:
                 mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
 
                 #copied from AKJBKQKDK
-                K_pen[:, i] = np.log(self.prop[i]) + math.lgamma( (self.nux[i] + p) / 2) - (1/2) * (s[i] + (p-self.d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(self.nux[i])) + math.lgamma(self.nux[i] /2) + ( (self.nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / self.nux[i])))
+                K_pen[:, i] = np.log(self.prop[i]) + scip.loggamma( (self.nux[i] + p) / 2) - (1/2) * (s[i] + (p-self.d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(self.nux[i])) + scip.loggamma(self.nux[i] /2) + ( (self.nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / self.nux[i])))
 
         kcon = -np.apply_along_axis(np.max, 0, K_pen)
         K_pen += kcon
@@ -196,7 +216,7 @@ class TFunHDDC:
 
         cls = np.argmax(t, axis=1)
         return {'t': t, 'class': cls}
-    
+    '''
     #Try returning models + diverged?
     def __str__(self):
         return None 
@@ -204,7 +224,7 @@ class TFunHDDC:
     #Try printing params?
     def __repr__(self):
         return None
-
+    '''
 
 
 #TODO add default values
@@ -241,8 +261,8 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
 
     #classification
 
-    if(known == None):
-        #clas = 0
+    if(known is None):
+        clas = 0
         kno = None
         test_index = None
 
@@ -258,7 +278,7 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
         #np.isnan(np.sum) is faster than np.isnan(np.min) for the general case
         else:
             if (not np.isnan(np.sum(known))):
-                warnings.warn("No Nones in 'known' vector supplied. All values have known classification (parameter estimation only)")
+                warnings.warn("No   s in 'known' vector supplied. All values have known classification (parameter estimation only)")
 
                 test_index = np.linspace(0, n-1, n)
                 kno = np.repeat(1, n)
@@ -272,30 +292,28 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
                 #isnan will detect only nan objects. Will crash if strings are supplied
                 #numpy arrays will convert None to nan if converted to float
                 #TODO switch NaNs to Nones here for known
-                training = np.where((not np.isnan(known)))
+                training = np.where((np.invert(np.isnan(known))))
                 test_index = training
-                kno = np.zeros(n)
+                kno = np.zeros(n).astype(int)
                 kno[test_index] = 1
-                unkno = (kno - 1)*(-1)
+                unkno = np.atleast_2d((kno - 1)*(-1))
 
                 #clas = len(training)/n
             #why do the evaluations to clas if its set to 1 here?
-            #clas = 1
+            clas = 1
 
-        if K > 1:
-            t = np.zeros((n, K))
-            tw = np.zeros((n, K))
+    if K > 1:
+        t = np.zeros((n, K))
+        tw = np.zeros((n, K))
 
-            #TODO finish init
-            match init:
-                case "vector":
-                    #clas always > 0 though
-                    #if clas > 0:
+        match init:
+            case "vector":
+                if clas > 0:
                     cn1 = len(np.unique(known[test_index]))
                     matchtab = np.repeat(-1, K*K).reshape((K,K))
                     #ensure this is the correct size. In R: matchtab[1:cn1, 1:K]
-                    temp = pd.crosstab(index = known, columns = init_vector)
-                    matchtab[0:cn1, 0:K] = temp.values
+                    temp = pd.crosstab(index = known, columns = init_vector).reindex(columns=np.arange(K), index=np.arange(cn1))
+                    matchtab[0:cn1, 0:K] = temp.to_numpy()
                     table = _Table(data=matchtab, rownames=temp.index, colnames = temp.columns)
                     
                     #___OLD___
@@ -304,282 +322,295 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
                     #numpy.where always returns a tuple of at least length 1 (useless since we're not multidim here),
                     #so we need to access the zeroth element
                     #np.isin behaves identical to %in% in R
-                    rownames = np.array([table.rownames, np.where(not np.isin(np.arange(0,K,1), np.unique(known[test_index])))[0]]).flatten()
+                    rownames = np.concatenate(([table.rownames, np.nonzero(np.invert(np.isin(np.arange(0,K,1), np.unique(known[test_index]))))[0]]))
                     table.rownames = rownames
-                    matchit = np.repeat(0, K)
+                    matchit = np.repeat(-1, K)
 
                     while(np.max(table.data)>0):
-                        #TODO figure out how to match the R dimensions
-                        #Check R code here
-                        ij = int(np.where(matchtab == max(matchtab.to_numpy().flatten())))
-                        ik = np.where(matchtab == max(matchtab.to_numpy()[:,ij]))
-                        matchit[ij] = np.repeat(-1, K)
-                        matchtab[:,ij] = np.repeat(-1, K)
-                        matchtab[int(ik)] = np.repeat(-1, K)
+                        ij = int(np.nonzero(table.data == np.max(table.data))[1][0])
 
-                    #TODO FIX
-                    matchit[np.where(matchit == 0)] = np.where((np.arange(0,K,1) not in np.unique(matchit)))
-                    #TODO pass by reference might not let this work correctly like it does in R
-                    initnew = init_vector
+                        ik = np.argmax(table.data[:,ij])
+                        matchit[ij] = table.rownames[ik]
+                        table.data[:,ij] = np.repeat(-1, K)
+                        table.data[ik] = np.repeat(-1, K)
+
+                    matchit[np.nonzero(matchit == -1)[0]] = np.nonzero(np.invert(np.isin(np.arange(K), np.unique(matchit))))[0]
+                    initnew = init_vector.copy()
                     for i in range(0, K):
                         initnew[init_vector == i] = matchit[i]
 
                     init_vector = initnew
 
-                    for i in range(0, K):
-                        t[np.array(np.where(init_vector == i), i)] = 1
+                for i in range(0, K):
+                    t[np.nonzero(init_vector == i)[0], i] = 1
 
-                case "kmeans":
-                    kmc = kmeans_control
-                    km = sklearn.cluster.KMeans(n_clusters = K, max_iter = itermax)
-                    cluster = km.fit_predict(data)
 
-                    #if clas > 0:
+            case "kmeans":
+                kmc = kmeans_control
+                km = clust.KMeans(n_clusters = K, max_iter = kmeans_control['max_iter'], n_init = kmeans_control['n_init'], algorithm=kmeans_control['algorithm'])
+                cluster = km.fit_predict(data)
+
+                if clas > 0:
                     cn1 = len(np.unique(known[test_index]))
-                    matchtab = np.rep(-1, K*K).reshape((K,K))
-                    matchtab[0:cn1, 0:K] = pd.crosstab(known, cluster, rownames=['known'], colnames=['init'])
-                    #Rownames here
-                    matchit = np.repeat(0, K)
+                    matchtab = np.repeat(-1, K*K).reshape((K,K))
+                    matchtab = _Table(data = matchtab)
+                    temptab = pd.crosstab(known, cluster, rownames=['known'], colnames=['init']).reindex(columns=np.arange(K), index=np.arange(cn1))
+                    matchtab.data[0:cn1, 0:K] = temptab.to_numpy()
+                    matchtab.rownames = np.concatenate((temptab.index, np.nonzero(np.invert(np.isin(np.arange(K), np.unique(known[test_index]))))[0]))
+                    matchtab.colnames = temptab.columns
+                    matchit = np.repeat(-1, K)
 
-                    while(max(matchtab.to_numpy().flatten())>0):
-                        #TODO figure out how to match the R dimensions
-                        ij = int(np.where(matchtab == max(matchtab.to_numpy().flatten())))
-                        ik = np.where(matchtab == max(matchtab.to_numpy()[:,ij]))
-                        matchit[ij] = np.repeat(-1, K)
-                        matchtab[:,ij] = np.repeat(-1, K)
-                        matchtab[int(ik)] = np.repeat(-1, K)
+                    while(np.max(matchtab.data)>0):
+                        ij = int(np.nonzero(matchtab.data == np.max(matchtab.data))[1][0])
 
-                    matchit[np.where(matchit == 0)] = np.where(np.arange(0, K, 1) != np.unique(matchit))
-                    #TODO pass by reference may not let this work correctly
-                    knew = cluster
+                        ik = np.argmax(matchtab.data[:,ij])
+                     
+                        matchit[ij] = matchtab.rownames[ik]
+                        matchtab.data[:,ij] = np.repeat(-1, K)
+                        matchtab.data[ik] = np.repeat(-1, K)
+
+                    matchit[np.nonzero(matchit == -1)[0]] = np.nonzero(np.invert(np.isin(np.arange(K), np.unique(matchit))))[0]
+                    knew = cluster.copy()
                     for i in range(0, K):
                         knew[cluster == i] = matchit[i]
                     
                     cluster = knew
 
-                    for i in range(0, K):
-                        t[np.array(np.where(cluster == i), i)] = 1
+                for i in range(0, K):
+                    t[np.nonzero(cluster == i)[0], i] = 1.
 
-                #skip trimmed kmeans
-                case "tkmeans":
-                    kmc = kmeans_control
+            #skip trimmed kmeans
+            case "tkmeans":
+                raise ValueError("tkmeans not supported")
 
-                case "mini-em":
-                    prms_best = 1
-                    for i in range(0, mini_nb[0]):
-                        prms = _T_funhddc_main1(fdobj=fdobj, wlist=wlist, known=known, dfstart=dfstart,
-                                                dfupdate=dfupdate, dfconstr=dfconstr, model=model,
-                                                threshold=threshold, method=method,
-                                                itermax=mini_nb[1], init_vector=0, init="random",
-                                                mini_nb=mini_nb, min_individuals=min_individuals,
-                                                noise_ctrl=noise_ctrl, kmeans_control=kmeans_control,
-                                                com_dim=com_dim, d_max=d_max, d_set=d_set)
-                        if len(prms) != 1:
-                            if len(prms_best == 1):
-                                prms_best = prms
-                            #TODO check what is being returned (array? dataframe? fdatabasis? fdataFrame?)
-                            #Assuming dictionary here
-                            elif prms_best['loglik'][-1] < prms['loglik'][-1]:
-                                prms_best = prms
+            case "mini-em":
+                prms_best = 1
+                for i in range(0, mini_nb[0]):
+                    prms = _T_funhddc_main1(fdobj=fdobj, wlist=wlist, K=K, known=known, dfstart=dfstart,
+                                            dfupdate=dfupdate, dfconstr=dfconstr, model=model,
+                                            threshold=threshold, method=method, eps=eps,
+                                            itermax=mini_nb[1], init_vector=0, init="random",
+                                            mini_nb=mini_nb, min_individuals=min_individuals,
+                                            noise_ctrl=noise_ctrl, kmeans_control=kmeans_control,
+                                            com_dim=com_dim, d_max=d_max, d_set=d_set)
+                    if isinstance(prms, TFunHDDC):
+                        if not isinstance(prms_best, TFunHDDC):
+                            prms_best = prms
+                        
+                        elif prms_best.loglik < prms.loglik:
+                            prms_best = prms
 
-                    #verify that this is what R line 627 is doing
-                    if len(prms_best) == 1:
-                        return 1
-                    
-                    t = prms_best['posterior']
-
-                    #if clas > 0:
-                    #TODO verify this is identical to R
-                    cluster = np.argmax(t, axis=0)
-
-                    cn1 = len(np.unique(known[test_index]))
-                    matchtab = np.rep(-1, K*K).reshape((K,K))
-                    matchtab[0:cn1, 0:K] = pd.crosstab(known, cluster, rownames=['known'], colnames=['init'])
-                    #Rownames here
-                    matchit = np.repeat(0, K)
-
-                    while(max(matchtab.to_numpy().flatten())>0):
-                        #TODO figure out how to match the R dimensions
-                        ij = int(np.where(matchtab == max(matchtab.to_numpy().flatten())))
-                        ik = np.where(matchtab == max(matchtab.to_numpy()[:,ij]))
-                        matchit[ij] = np.repeat(-1, K)
-                        matchtab[:,ij] = np.repeat(-1, K)
-                        matchtab[int(ik)] = np.repeat(-1, K)
-
-                    matchit[np.where(matchit == 0)] = np.where(np.arange(0, K, 1) != np.unique(matchit))
-                    #TODO pass by reference may not let this work correctly
-                    knew = cluster
-                    for i in range(0, K):
-                        knew[cluster == i] = matchit[i]
-                    
-                    cluster = knew
-
-                    for i in range(0, K):
-                        t[np.array(np.where(cluster == i), i)] = 1
-
-                case "random":
-                    rangen = np.random.default_rng()
-                    t = rangen.multinomial(n=1, pvals=np.repeat(1/K, K), size = n)
-                    compteur = 1
-
-                    #sum columns
-                    while(min(np.sum(t, axis=0)) < 1 and compteur + 1 < 5):
-                        compteur += 1
-                        t = rangen.multinomial(n=1, pvals=np.repeat(1/K, K), size=n)
-
-                    if(min(np.sum(t, axis=0)) < 1):
-                        print("Random initialization failed (n too small)")
-                        return None
-                    
-                    #if clas > 0:
-                    cluster = np.argmax(t, axis=0)
-
-                    while(max(matchtab.to_numpy().flatten())>0):
-                        #TODO figure out how to match the R dimensions
-                        ij = int(np.where(matchtab == max(matchtab.to_numpy().flatten())))
-                        ik = np.where(matchtab == max(matchtab.to_numpy()[:,ij]))
-                        matchit[ij] = np.repeat(-1, K)
-                        matchtab[:,ij] = np.repeat(-1, K)
-                        matchtab[int(ik)] = np.repeat(-1, K)
-
-                    matchit[np.where(matchit == 0)] = np.where(np.arange(0, K, 1) != np.unique(matchit))
-                    #TODO pass by reference may not let this work correctly
-                    knew = cluster
-                    for i in range(0, K):
-                        knew[cluster == i] = matchit[i]
-                    
-                    cluster = knew
-
-                    for i in range(0, K):
-                        t[np.array(np.where(cluster == i), i)] = 1
-
-        else:
-            t = np.ones(shape = (n, 1))
-            tw = np.ones(shape = (n, 1))
-
-        #if clas > 0:
-            t = unkno*t
-            
-            for i in range(0, n):
-                if kno[i] == 1:
-                    t[i, known[i]] = 1
-
-        #R uses rep.int here: does it matter? (shouldn't)
-        nux = np.rep(dfstart, K)
-
-        #call to init function here
-        initx = _T_funhddt_init(fdobj, wlist, K, t, nux, model, threshold, method, noise_ctrl, com_dim, d_max, d_set)
-        
-        #call to twinit function here
-        tw = _T_funhddt_twinit(fdobj, wlist, initx, nux)
-
-        #I indexes lists later on, should it be -1? it is 0 in R
-        I = 0
-        #Check if 
-        likely = []
-        test = np.Inf
-
-        while(I <= itermax and test >= eps):
-            if K > 1:
-                #does t have a NaN/None?
-                if(np.isnan(np.sum(np.asarray(t, float)))):
-                   print("Unknown error: NA in t_ik")
-                   return None
+                #TODO figure out better way to signal that mini-em didn't converge
+                if not isinstance(prms, TFunHDDC):
+                    return 1
                 
-                #try numpy any
-                #does t have column sums less than min_individuals?
-                #if (any(npsum(np.where(t>1/K,t,0), axis=0) < min_individuals))
-                if(len(np.where(np.sum(np.where(t>1/K, t, 0), axis=0) < min_individuals)[0]) > 0):
-                    return "pop<min_individuals"
-            
-            #m_step1 called here
-            m = _T_funhddt_m_step1(fdobj, wlist, K, t, tw, nux, dfupdate, dfconstr, model, threshold, method, noise_ctrl, com_dim, d_max, d_set)
+                t = prms_best.posterior
 
-            nux = m['nux'].copy()
-            
-            #e_step1 called here
-            to = _T_funhddt_e_step1(fdobj, wlist, m, 0, known, kno)
+                if clas > 0:
+                    cluster = np.argmax(t, axis=1)
 
-            
-            L = to['L']
-            t = to['t']
-            tw = to['tw']
-            
+                    cn1 = len(np.unique(known[test_index]))
+                    matchtab = np.repeat(-1, K*K).reshape((K,K))
+                    matchtab = _Table(data = matchtab)
+                    temptab = pd.crosstab(known, cluster, rownames=['known'], colnames=['init']).reindex(columns=np.arange(K), index=np.arange(cn1))
+                    matchtab.data[0:cn1, 0:K] = temptab.to_numpy()
+                    matchtab.rownames = np.concatenate((temptab.index, np.nonzero(np.invert(np.isin(np.arange(K), np.unique(known[test_index]))))[0]))
+                    matchtab.colnames = temptab.columns
+                    matchit = np.repeat(-1, K)
 
-            #likely[I] = L in R. Is there a reason why we would need NAs?
-            likely.append(L)
+                    while(np.max(matchtab.data)>0):
+                        ij = int(np.nonzero(matchtab.data == np.max(matchtab.data))[1][0])
 
-            #TODO I-1 and I-2 adjusted for Python indicies
-            if(I == 2):
-                test = abs(likely[I] - likely[I-1])
-            elif I > 2:
-                lal = (likely[I] - likely[I-1])/(likely[I-1] - likely[I-2])
-                lbl = likely[I-1] + (likely[I] - likely[I-1])/(1.0/lal)
-                test = abs(lbl - likely[I-1])
-            
-            I += 1
+                        ik = np.argmax(matchtab.data[:,ij])
+                     
+                        matchit[ij] = matchtab.rownames[ik]
+                        matchtab.data[:,ij] = np.repeat(-1, K)
+                        matchtab.data[ik] = np.repeat(-1, K)
 
-        #a
-        if np.isin(model, np.array(["AKBKQKDK", "AKBQKDK", "AKBKQKD", "AKBQKD"])):
-            a = _Table(data = m['a'][:,0], rownames=["Ak:"], colnames=np.arange(0,m['K']))
+                    matchit[np.nonzero(matchit == -1)[0]] = np.nonzero(np.invert(np.isin(np.arange(K), np.unique(matchit))))[0]
+                    knew = cluster.copy()
+                    for i in range(0, K):
+                        knew[cluster == i] = matchit[i]
+                    
+                    cluster = knew
 
-        #find Python paste equivalent
-        #Solution: for loop
-        elif model == "AJBQD":
-            colnamesA1 = []
-            for i in range(0, m['d'][0]):
-                colnamesA1.append('a' + str(i))
-            a = _Table(data = m['a'][0], rownames= ['Aj:'], colnames = colnamesA1)
+                    for i in range(0, K):
+                        t[np.nonzero(cluster == i)[0], i] = 1.
+
+            case "random":
+                rangen = np.random.default_rng()
+                t = rangen.multinomial(n=1, pvals=np.repeat(1/K, K), size = n)
+                compteur = 1
+
+                #sum columns
+                while(min(np.sum(t, axis=0)) < 1 and compteur + 1 < 5):
+                    compteur += 1
+                    t = rangen.multinomial(n=1, pvals=np.repeat(1/K, K), size=n)
+
+                if(min(np.sum(t, axis=0)) < 1):
+                    raise ValueError("Random initialization failed (n too small)")
+                if clas > 0:
+                    cluster = np.argmax(t, axis=1)
+                    cn1 = len(np.unique(known[test_index]))
+                    matchtab = np.repeat(-1, K*K).reshape((K,K))
+                    matchtab = _Table(data=matchtab)
+                    temptab = pd.crosstab(known, cluster, rownames=['known'], colnames=['init']).reindex(columns=np.arange(K), index=np.arange(cn1))
+                    matchtab.data[0:cn1, 0:K] = temptab.to_numpy()
+                    matchtab.rownames = np.concatenate((temptab.index, np.nonzero(np.invert(np.isin(np.arange(K), np.unique(known[test_index]))))[0]))
+                    matchtab.colnames = temptab.columns
+                    matchit = np.repeat(-1, K)
+
+                    while(np.max(matchtab.data)>0):
+                        ij = int(np.nonzero(matchtab.data == np.max(matchtab.data))[1][0])
+
+                        ik = np.argmax(matchtab.data[:,ij])
+                     
+                        matchit[ij] = matchtab.rownames[ik]
+                        matchtab.data[:,ij] = np.repeat(-1, K)
+                        matchtab.data[ik] = np.repeat(-1, K)
+
+                    matchit[np.nonzero(matchit == -1)[0]] = np.nonzero(np.invert(np.isin(np.arange(K), np.unique(matchit))))[0]
+                    #TODO pass by reference may not let this work correctly
+                    knew = cluster.copy()
+                    for i in range(0, K):
+                        knew[cluster == i] = matchit[i]
+                    
+                    cluster = knew
+
+                    for i in range(0, K):
+                        t[np.nonzero(cluster == i)[0], i] = 1.
+
+
+    else:
+        t = np.ones(shape = (n, 1))
+        tw = np.ones(shape = (n, 1))
+
+    if clas > 0:
+        t = unkno.T*t
         
-        elif np.isin(model, np.array(["ABKQKDK", "ABQKDK", "ABKQKD", "ABQKD", "ABQD"])):
-            a = _Table(data = m['a'][0], rownames=['A:'], colnames=[''])
-
-        else:
-            colnamesA2= []
-            for i in range(0, np.max(m['d'])):
-                colnamesA2.append('a' + str(i))
-            a = _Table(data = m['a'], rownames=np.arange(0, m['K']), colnames=colnamesA2)
+        for i in range(0, n):
+            if kno[i] == 1:
+                t[i, int(known[i])] = 1.
 
 
-        #b
-        if np.isin(model, np.array(["AKJBQKDK", "AKBQKDK", "ABQKDK", "AKJBQKD", "ABQKD", "AJBQD", "ABQD"])):
-            b = _Table(data = m['b'][0], rownames=["B:"], colnames=[''])
-        else:
-            b = _Table(data = m['b'], rownames=["Bk:"], colnames=np.arange(0, m['K']))
+    #R uses rep.int here: does it matter? (shouldn't)
+    nux = np.repeat(dfstart, K)
 
-        d = _Table(m['d'], rownames=["dim:"], colnames=np.arange(0, m['K']))
+    #call to init function here
+    initx = _T_funhddt_init(fdobj, wlist, K, t, nux, model, threshold, method, noise_ctrl, com_dim, d_max, d_set)
+    
+    #call to twinit function here
+    tw = _T_funhddt_twinit(fdobj, wlist, initx, nux)
 
-        colnamesmu = []
-        for i in range(0, p):
-            colnamesmu.append("V" + str(i))
+    #Start I at 0, likely compared on second iteration when I == 1
+    I = 0
+    #Check if 
+    likely = []
+    test = np.Inf
 
-        mu = _Table(m['mu'], rownames=np.arange(0, m['K']), colnames=colnamesmu)
-
-        prop = _Table(m['prop'], rownames=[''], colnames=np.arange(0, m['K']))
-        nux = _Table(m['nux'], rownames=[''], colnames=np.arange(0, m['K']))
-
-        complexity = _T_hdc_getComplexityt(m, p, dfconstr)
-        #TODO class here
-        cls = np.argmax(t, axis=0)
-
-
-        converged = test < eps
-
-        params = {'params': params, 'wlist': wlist, 'model':model, 'K':K, 'd':d,
-                  'a':a, 'b':b, 'mu':mu, 'prop':prop, 'nux':nux, 'ev': m['ev'],
-                  'Q': m['Q'], 'Q1':m['Q1'], 'fpca': m['fpcaobj'], 
-                  'loglik':likely[-1], 'loglik_all': likely, 'posterior': t,
-                  'class': cls, 'com_ev': com_ev, 'n':n, 'complexity':complexity,
-                  'threshold': threshold, 'd_select': method, 
-                  'converged': converged, "index": test_index}
+    # I <= itermax means I + 1 iterations when starting at 0
+    while(I < itermax and test >= eps):
+        if K > 1:
+            #does t have a NaN/None?
+            if(np.isnan(np.sum(t))):
+                raise ValueError("t matrix contatins NaNs/Nones")
+            
+            #try numpy any
+            #does t have column sums less than min_individuals?
+            #if (any(npsum(np.where(t>1/K,t,0), axis=0) < min_individuals))
+            if(np.any(np.sum(t>(1/K), axis=0) < min_individuals)):
+                return "pop<min_individuals"
         
-        bic_icl = _T_hdclassift_bic(params, p, dfconstr)
-        params['BIC'] = bic_icl["bic"]
-        params["ICL"] = bic_icl['icl']
+        #m_step1 called here
+        m = _T_funhddt_m_step1(fdobj, wlist, K, t, tw, nux, dfupdate, dfconstr, model, threshold, method, noise_ctrl, com_dim, d_max, d_set)
+        nux = m['nux'].copy()
+        
+        #e_step1 called here
+        to = _T_funhddt_e_step1(fdobj, wlist, m, clas, known, kno)
 
-        #TODO class here
+        
+        L = to['L']
+        t = to['t']
+        tw = to['tw']
 
-        return params
+        
+        
+
+        #likely[I] = L in R. Is there a reason why we would need NAs?
+        likely.append(L)
+
+        if(I == 1):
+            test = abs(likely[I] - likely[I-1])
+        elif I > 1:
+            lal = (likely[I] - likely[I-1])/(likely[I-1] - likely[I-2])
+            lbl = likely[I-1] + (likely[I] - likely[I-1])/(1.0/lal)
+            test = abs(lbl - likely[I-1])
+        
+        I += 1
+
+    #a
+    if np.isin(model, np.array(["AKBKQKDK", "AKBQKDK"])):
+        a = _Table(data = m['a'][:,0], rownames=["Ak:"], colnames=np.arange(0,m['K']))
+
+    
+    elif np.isin(model, np.array(["ABKQKDK", "ABQKDK"])):
+        a = _Table(data = m['a'][0], rownames=['A:'], colnames=[''])
+
+    else:
+        colnamesA2= []
+        for i in range(0, np.max(m['d'])):
+            colnamesA2.append(f'a{i}')
+        a = _Table(data = m['a'], rownames=np.arange(0, m['K']), colnames=colnamesA2)
+
+
+    #b
+    if np.isin(model, np.array(["AKJBQKDK", "AKBQKDK", "ABQKDK"])):
+        b = _Table(data = m['b'][0], rownames=["B:"], colnames=[''])
+    else:
+        b = _Table(data = m['b'], rownames=["Bk:"], colnames=np.arange(0, m['K']))
+    
+    #d
+    d = _Table(m['d'], rownames=["dim:"], colnames=np.arange(0, m['K']))
+
+
+    #mu
+    colnamesmu = []
+    for i in range(0, p):
+        colnamesmu.append(f"V{i}")
+
+    mu = _Table(m['mu'], rownames=np.arange(0, m['K']), colnames=colnamesmu)
+
+    prop = _Table(m['prop'], rownames=[''], colnames=np.arange(0, m['K']))
+    nux = _Table(m['nux'], rownames=[''], colnames=np.arange(0, m['K']))
+
+    complexity = _T_hdc_getComplexityt(m, p, dfconstr)
+
+    cl = np.argmax(t, axis=1)
+
+
+    converged = test < eps
+
+
+    params = {'wlist': wlist, 'model':model, 'K':K, 'd':d,
+                'a':a, 'b':b, 'mu':mu, 'prop':prop, 'nux':nux, 'ev': m['ev'],
+                'Q': m['Q'], 'Q1':m['Q1'], 'fpca': m['fpcaobj'], 
+                'loglik':likely[-1], 'loglik_all': likely, 'posterior': t,
+                'class': cl, 'com_ev': com_ev, 'N':n, 'complexity':complexity,
+                'threshold': threshold, 'd_select': method, 
+                'converged': converged, "index": test_index}
+
+    bic_icl = _T_hdclassift_bic(params, p, dfconstr)
+    params['BIC'] = bic_icl["bic"]
+    params["ICL"] = bic_icl['icl']
+
+    tfunobj = TFunHDDC(params['wlist'], params['model'], params['K'], params['d'], 
+                        params['a'], params['b'], params['mu'], params['prop'], params['nux'],
+                        params['ev'], params['Q'], params['Q1'], params['fpca'],
+                        params['loglik'], params['loglik_all'], params['posterior'],
+                        params['class'], params['com_ev'], params['N'], params['complexity'],
+                        params['threshold'], params['d_select'], params['converged'], 
+                        params['index'], params['BIC'], params['ICL'])
+    return tfunobj
 
 def _T_funhddt_init(fdobj, Wlist, K, t, nux, model, threshold, method, noise_ctrl, com_dim, d_max, d_set):
 
@@ -602,11 +633,11 @@ def _T_funhddt_init(fdobj, Wlist, K, t, nux, model, threshold, method, noise_ctr
     prop = n/N
 
     mu = np.repeat(0., K*p).reshape((K, p))
-    ind = np.apply_along_axis(np.nonzero, 1, t>0)
-    n_bis = np.repeat(0., K)
+    #ind = np.apply_along_axis(np.where, 1, t>0)
+    #n_bis = np.repeat(0., K)
 
-    for i in range(K):
-        n_bis[i] = len(ind[i])
+    #for i in range(K):
+        #n_bis[i] = len(ind[i][0])
 
     traceVect = np.repeat(0., K)
     ev = np.repeat(0., K*p).reshape((K, p))
@@ -639,7 +670,6 @@ def _T_funhddt_init(fdobj, Wlist, K, t, nux, model, threshold, method, noise_ctr
     ai = np.repeat(np.NaN, K*(np.max(d))).reshape((K, (np.max(d))))
     if np.isin(model, np.array(['AKJBKQKDK', 'AKJBQKDK'])):
         for i in range(K):
-            print(ev)
             ai[i, 0:d[i]] = ev[i, 0:d[i]]
 
     elif np.isin(model, np.array(['AKBKQKDK', 'AKBQKDK'])):
@@ -687,8 +717,10 @@ def _T_initmypca_fd1(fdobj, Wlist, Ti):
         temp = fdobj.copy()
         mean_fd = fdobj.copy()
         coef = fdobj.coefficients.copy()
+        #print(coef)
         #by default numpy cov function uses rows as variables and columns as observations, opposite to R
         mat_cov = np.cov(m=coef, aweights=Ti, ddof=0, rowvar=False)
+        #print(Wlist['W_m'])
         #may need to try this with other params depending on how weights are passed in
         coefmean = np.average(coef, axis=0, weights=Ti)
         #Verify this
@@ -696,15 +728,32 @@ def _T_initmypca_fd1(fdobj, Wlist, Ti):
         #Replaces as.matrix(data.frame(mean=coefmean))
         mean_fd.coefficients = coefmean
         cov = (Wlist['W_m']@mat_cov)@(Wlist['W_m'].T)
+        if not check_symmetric(cov, 1.e-12):
+            print(cov - cov.T < 1.e-12)
+            ind = np.nonzero(cov - cov.T > 1.e-12)
+            cov[ind] = cov.T[ind]
+            print(np.all(cov - cov.T < 1.e-12))
 
-        valeurs_propres, vecteurs_propres = np.linalg.eig(cov.astype(float))
+            raise ValueError()
+
+        # for i in range(len(cov)):
+        #     for j in range(len(cov)):
+        #         if cov[i, j] != cov[j,i]:
+        #             return i, j
+        #         print(cov[i,j] == cov[j,i])
+        valeurs_propres, vecteurs_propres = scil.eig(cov)
+        #TODO This may make the program slower: see if not needed
+        #indices = valeurs_propres.argsort()
+        #valeurs_propres = valeurs_propres[indices[::-1]]
+        #vecteurs_propres = vecteurs_propres[indices[::-1]]
+        #print(valeurs_propres)
         fonctionspropres = fdobj.copy()
-        bj = np.linalg.solve(Wlist['W_m'].astype(float), np.eye(Wlist['W_m'].shape[0]).astype(float))@vecteurs_propres
+        bj = scil.solve(Wlist['W_m'], np.eye(Wlist['W_m'].shape[0]))@np.real(vecteurs_propres)
         fonctionspropres.coefficients = bj
 
         scores = skfda.misc.inner_product_matrix(temp.basis, fonctionspropres.basis)
         varprop = valeurs_propres / np.sum(valeurs_propres)
-        ipcafd = {'valeurs_propres': valeurs_propres, 'harmonic': fonctionspropres, 'scores': scores, 'covariance': cov, 'U':bj, 'meanfd': mean_fd, 'mux': coefmean}
+        ipcafd = {'valeurs_propres': np.real(valeurs_propres), 'harmonic': fonctionspropres, 'scores': scores, 'covariance': cov, 'U':bj, 'meanfd': mean_fd, 'mux': coefmean}
 
     #Multivariate
     else:
@@ -742,8 +791,8 @@ def _T_initmypca_fd1(fdobj, Wlist, Ti):
             mean_fd[f'{i}'].coefficients = coefmean[(n_lead):(n_var + n_lead)]
 
         cov = (Wlist['W_m']@mat_cov)@(Wlist['W_m'].T)
-        valeurs_propres, vecteurs_propres = np.linalg.eig(cov.astype(float))
-        bj = np.linalg.solve(Wlist['W_m'].astype(float), np.eye(Wlist['W_m'].shape[0]).astype(float))@vecteurs_propres
+        valeurs_propres, vecteurs_propres = scil.eig(cov)
+        bj = scil.solve(Wlist['W_m'], np.eye(Wlist['W_m'].shape[0]))@vecteurs_propres
         fonctionspropres = temp['0'].copy()
         fonctionspropres.coefficients = bj
         scores = (coef@Wlist['W'])@bj
@@ -761,20 +810,23 @@ def _T_initmypca_fd1(fdobj, Wlist, Ti):
 def _T_funhddt_twinit(fdobj, wlist, par, nux):
 
     #try this if fdobj is an fdata (Univariate only right now)
-    if(type(fdobj) == skfda.FDataBasis or type(fdobj) == skfda.FDataGrid):
-        x = fdobj.coefficients
+    if(type(fdobj) == skfda.FDataBasis):
+       x = fdobj.coefficients
 
     #For R testing if fdobj gets passed as a dict
     #Should also work for dataframe (converts to pandas dataframe)
+    #Will be changed outside of R testing so that the expected element in the
+    #dict or dataframs is an FDataBasis
     if type(fdobj) == dict or type(fdobj) == pd.DataFrame:
         #Multivariate
-        if len(x.keys() > 1):
-            x = fdobj[0].coefficients
+        #Here in R, the first element will be named '1'
+        if len(fdobj.keys()) > 1:
+            x = np.transpose(fdobj['1']['coefficients'])
             for i in range(0, len(fdobj)):
-                x = np.c_[x, fdobj[f'{i}'].coefficients]
+                x = np.c_[x, np.transpose(fdobj[f'{i}']['coefficients'])]
         #univariate
         else:
-            x = fdobj.coeficients
+            x = fdobj['coefficients'].T
 
     p = x.shape[1]
     n = x.shape[0]
@@ -792,9 +844,9 @@ def _T_funhddt_twinit(fdobj, wlist, par, nux):
     mah_pen = np.zeros(n*K).reshape((n,K))
 
     for i in range(0, K):
-        Qk = Q1['i']
+        Qk = Q1[f'{i}']
 
-        aki = np.sqrt(np.diag(np.concatenate((1/a[i, 0:d[i]],np.repeat(1/b[i], p-d[i]) ))))
+        aki = np.sqrt(np.diag(np.concatenate((1/a[i, 0:int(d[i])],np.repeat(1/b[i], p-int(d[i])) ))))
         muki = mu[i]
 
         wki = wlist['W_m']
@@ -807,73 +859,80 @@ def _T_funhddt_twinit(fdobj, wlist, par, nux):
 # In R, this function doesn't return anything?
 
 def _T_funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
-    
-    #try this if fdobj is an fdata (Univariate only right now)
-    if(type(fdobj) == skfda.FDataBasis or type(fdobj == skfda.FDataGrid)):
+
+   #try this if fdobj is an fdata (Univariate only right now)
+    if(type(fdobj) == skfda.FDataBasis):
         x = fdobj.coefficients
 
     #For R testing if fdobj gets passed as a dict
     #Should also work for dataframe (converts to pandas dataframe)
+    #Will be changed outside of R testing so that the expected element in the
+    #dict or dataframs is an FDataBasis
     if type(fdobj) == dict or type(fdobj) == pd.DataFrame:
         #Multivariate
-        if len(x.keys() > 1):
-            x = fdobj[0].coefficients
+        #Here in R, the first element will be named '1'
+        if len(fdobj.keys()) > 1:
+            x = np.transpose(fdobj['1']['coefficients'])
             for i in range(0, len(fdobj)):
-                x = np.c_[x, fdobj[f'{i}'].coefficients]
+                x = np.c_[x, np.transpose(fdobj[f'{i}']['coefficients'])]
         #univariate
         else:
-            x = fdobj.coeficients
+            x = fdobj['coefficients'].T
+
+
 
     p = x.shape[1]
     N = x.shape[0]
     K = par["K"]
-    nux = par["nux"]
-    a = par["a"]
-    b = par["b"]
-    mu = par["mu"]
-    d = par["d"]
-    prop = par["prop"]
-    Q = par["Q"]
-    Q1 = par["Q1"]
+    nux = par["nux"].copy()
+    a = par["a"].copy()
+    b = par["b"].copy()
+    mu = par["mu"].copy()
+    d = par["d"].copy()
+    prop = par["prop"].copy()
+    Q = par["Q"].copy()
+    Q1 = par["Q1"].copy()
     b[b<1e-6] = 1e-6
 
     if clas > 0:
-        unkno = (kno-1)*(-1)
+        unkno = np.atleast_2d((kno-1)*(-1)).T
 
-    t = np.repeat(0, N*K).reshape(N, K)
-    tw = np.repeat(0, N*K).reshape(N, K)
-    mah_pen = np.repeat(0, N*K).reshape(N,K)
-    K_pen = np.repeat(0, N*K).reshape(N,K)
-    num = np.repeat(0, N*K).reshape(N,K)
-    ft = np.repeat(0, N*K).reshape(N,K)
+    t = np.repeat(0., N*K).reshape(N, K)
+    tw = np.repeat(0., N*K).reshape(N, K)
+    mah_pen = np.repeat(0., N*K).reshape(N,K)
+    K_pen = np.repeat(0., N*K).reshape(N,K)
+    ft = np.repeat(0., N*K).reshape(N,K)
 
-    s = np.repeat(0, K)
+    s = np.repeat(0., K)
 
     for i in range(0,K):
-        s[i] = np.sum(np.log(a[i, 0:d[i]]))
+        s[i] = np.sum(np.log(a[i, 0:int(d[i])]))
 
         Qk = Q1[f"{i}"]
-        aki = np.sqrt(np.diag(np.concatenate((1/a[i, 0:d[i]],np.repeat(1/b[i], p-d[i]) ))))
+        aki = np.sqrt(np.diag(np.concatenate((1/a[i, 0:int(d[i])],np.repeat(1/b[i], p-int(d[i])) ))))
+        #print(aki)
         muki = mu[i]
 
         Wki = Wlist["W_m"]
         dety = Wlist["dety"]
 
         mah_pen[:, i] = _T_imahalanobis(x, muki, Wki, Qk, aki)
-
         tw[:, i] = (nux[i]+p)/(nux[i] + mah_pen[:,i])
 
-        #Verify this doesn't break order of operations
-        K_pen[:,i] = np.log(prop[i]) + math.lgamma((nux[i] + p)/2) - (1/2) * \
+        K_pen[:,i] = np.log(prop[i]) + scip.loggamma((nux[i] + p)/2) - (1/2) * \
         (s[i] + (p-d[i])*np.log(b[i]) - np.log(dety)) - ((p/2) * (np.log(np.pi)\
-        + np.log(nux[i])) + math.lgamma(nux[i]/2) + ((nux[i] + p)/2) * \
+        + np.log(nux[i])) + scip.loggamma(nux[i]/2) + ((nux[i] + p)/2) * \
         (np.log(1+mah_pen[:, i] / nux[i])))
 
     ft = np.exp(K_pen)
     ft_den = np.sum(ft, axis=1)
     kcon = - np.apply_along_axis(np.max, 1, K_pen)
+    #print(K_pen)
+    #print(kcon)
     K_pen = K_pen + np.atleast_2d(kcon).T
     num = np.exp(K_pen)
+    #print(num)
+    #print(np.sum(num, axis=1))
     t = num / np.atleast_2d(np.sum(num, axis=1)).T
 
     L1 = np.sum(np.log(ft_den))
@@ -886,18 +945,17 @@ def _T_funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
     tcol = np.sum(t, axis=0)
 
     if(np.any(tcol<p)):
-        t = (t + 0.0000001) / (trow + (K*0.0000001))
-
+        t = (t + 0.0000001) / np.atleast_2d(trow + (K*0.0000001)).T
     if (clas > 0):
         t = unkno*t
 
         for i in range(0,N):
             if (kno[i] == 1):
-                t[i, known[i]] = 1
+                t[i, int(known[i])] = 1
 
     #Nothing is returned here in R
-
-    return {t: t, tw: tw, L: L}
+    # Return this for testing purposes
+    return {'t': t, 'tw': tw, 'L': L}
 
 
 
@@ -932,12 +990,12 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
         mu[i] = np.apply_along_axis(np.sum,1,np.atleast_2d(np.atleast_2d(corX[:, i]).T@np.atleast_2d(np.repeat(1,p))).T * x.T)  / np.sum(corX[:,i])
         mu1[i] = np.sum(np.atleast_2d(corX[:,i])*x.T, axis=1)/np.sum(corX[:,i])
 
-    ind = np.apply_along_axis(np.where, 1, t>0)
+    #ind = np.apply_along_axis(np.where, 1, t>0)
     
-    n_bis = np.arange(0,K)
-    for i in range(0,K):
+    #n_bis = np.arange(0,K)
+    #for i in range(0,K):
         #verify this is the same in R code. Should be, since [[i]] acceses the list item i
-        n_bis[i] = len(ind[i])
+        #n_bis[i] = len(ind[i])
 
 
     match dfupdate:
@@ -970,7 +1028,7 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
         fpcaobj[f'{i}'] = donnees
 
     #Intrinsic dimensions selection
-
+    
     d = _T_hdclassif_dim_choice(ev, n, method, threshold, False, noise_ctrl, d_set)
     #correct for Python indices
     d+=1
@@ -1002,7 +1060,7 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
 
     #Parameter b
 
-    bi = np.repeat(None, K)
+    bi = np.repeat(np.NaN, K)
     if model in ['AKJBKQKDK', 'AKBKQKDK', 'ABKQKDK']:
         for i in range(K):
             remainEV = traceVect[i] - np.sum(ev[i, 0:d[i]])
@@ -1016,7 +1074,7 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
             b = b+remainEV*prop[i]
         bi[0:K] = b/(min(N,p)-eps)
 
-
+    #print(bi)
     result = {'model':model, "K": K, "d":d, "a":ai, "b": bi, "mu":mu, "prop": prop, "nux":nux, "ev":ev, "Q":Q, "fpcaobj":fpcaobj, "Q1":Q1}
     return result        
 
@@ -1036,10 +1094,11 @@ def _T_tyxf7(dfconstr, nux, n, t, tw, K, p, N):
 
         #scipy digamma is slow? https://gist.github.com/timvieira/656d9c74ac5f82f596921aa20ecb6cc8
         for i in range(0, K):
-            constn = 1 + (1/n[i]) * np.sum(t[:, i] * (np.log(tw[:, i]) - tw[:, i])) + scip.digamma((dfoldg[i] + p)/2) - np.log((dfoldg[i] + p)/2)
-            temp = scip.digamma((dfoldg[i] + p)/2)
+            constn = 1 + (1/n[i]) * np.sum(t[:, i] * (np.log(tw[:, i]) - tw[:, i])) + scip.psi((dfoldg[i] + p)/2) - np.log((dfoldg[i] + p)/2)
+            temp = scip.psi((dfoldg[i] + p)/2)
             
-            f = lambda v : np.log(v/2) - scip.digamma(v/2) + constn
+            f = lambda v : np.log(v/2) - scip.psi(v/2) + constn
+          
             #Verify this outputs the same as R: may need to set rtol to 0
             newnux[i] = scio.brentq(f, 0.0001, 1000, xtol=0.00001)
 
@@ -1051,11 +1110,13 @@ def _T_tyxf7(dfconstr, nux, n, t, tw, K, p, N):
 
     else:
         dfoldg = nux[0]
-        constn = 1 + (1/N) * np.sum(t *(np.log(tw) - tw)) + scip.digamma( (dfoldg + p) / 2) - np.log( (dfoldg + p) / 2)
 
-        f = lambda v : np.log(v/2) - scip.digamma(v/2) + constn
+        constn = 1 + (1/N) * np.sum(t *(np.log(tw) - tw)) + scip.psi( (dfoldg + p) / 2) - np.log( (dfoldg + p) / 2)
+
+        f = lambda v : np.log(v/2) - scip.psi(v/2) + constn
             #Verify this outputs the same as R: may need to set rtol to 0
-        dfsamenewg = scio.brentq(f, 0.0001, 1000, xtol=0.01)
+        
+        dfsamenewg = scio.brentq(f, a=0.0001, b=1000, xtol=0.01)
 
         if dfsamenewg > 200:
             dfsamenewg = 200.
@@ -1074,11 +1135,11 @@ def _T_tyxf8(dfconstr, nux, n, t, tw, K, p, N):
         dfoldg = nux.copy()
         
         for i in range(0, K):
-            constn = 1 + (1 / n[i]) * np.sum(t[:, i] * (np.log(tw[:, i]) - tw[:, i])) + scip.digamma((dfoldg[i] + p)/2) - np.log( (dfoldg[i] + p)/2)
-            temp = scip.digamma((dfoldg[i] + p)/2)
+            constn = 1 + (1 / n[i]) * np.sum(t[:, i] * (np.log(tw[:, i]) - tw[:, i])) + scip.psi((dfoldg[i] + p)/2) - np.log( (dfoldg[i] + p)/2)
+            temp = scip.psi((dfoldg[i] + p)/2)
             
             constn = -constn
-            newnux[i] = (-np.exp(constn) + 2 * (np.exp(constn)) * (np.exp(scip.digamma(dfoldg[i] / 2)) - ( (dfoldg[i]/2) - (1/2)))) / (1 - np.exp(constn))
+            newnux[i] = (-np.exp(constn) + 2 * (np.exp(constn)) * (np.exp(scip.psi(dfoldg[i] / 2)) - ( (dfoldg[i]/2) - (1/2)))) / (1 - np.exp(constn))
 
             if newnux[i] > 200:
                 newnux[i] = 200.
@@ -1088,10 +1149,10 @@ def _T_tyxf8(dfconstr, nux, n, t, tw, K, p, N):
 
     else:
         dfoldg = nux[0]
-        constn = 1 + (1 / N) * np.sum(t * (np.log(tw) - tw)) + scip.digamma((dfoldg + p)/2) - np.log( (dfoldg + p)/2)
+        constn = 1 + (1 / N) * np.sum(t * (np.log(tw) - tw)) + scip.psi((dfoldg + p)/2) - np.log( (dfoldg + p)/2)
         constn = -constn
 
-        dfsamenewg = (-np.exp(constn) + 2 * (np.exp(constn)) * (np.exp(scip.digamma(dfoldg / 2)) - ( (dfoldg/2) - (1/2)))) / (1 - np.exp(constn))
+        dfsamenewg = (-np.exp(constn) + 2 * (np.exp(constn)) * (np.exp(scip.psi(dfoldg / 2)) - ( (dfoldg/2) - (1/2)))) / (1 - np.exp(constn))
 
         if dfsamenewg > 200:
             dfsamenewg = 200.
@@ -1119,15 +1180,26 @@ def _T_mypcat_fd1(fdobj, Wlist, Ti, corI):
         mat_cov = (rep.T@rep) / np.sum(Ti)
         #print(rep)
         cov = (Wlist['W_m']@ mat_cov)@(Wlist['W_m'].T)
+        if not check_symmetric(cov, 1.e-12):
+            print(cov - cov.T < 1.e-12)
+            ind = np.nonzero(cov - cov.T > 1.e-12)
+            cov[ind] = cov.T[ind]
+            print(np.all(cov - cov.T < 1.e-12))
 
-        valeurs_propres, vecteurs_propres = np.linalg.eig(cov.astype(float))
+            raise ValueError()
+
+        valeurs_propres, vecteurs_propres = scil.eig(cov)
+        #indices = valeurs_propres.argsort()
+        #valeurs_propres = valeurs_propres[indices[::-1]]
+        #vecteurs_propres = vecteurs_propres[indices[::-1]]
+
         fonctionspropres = fdobj.copy()
-        bj = np.linalg.solve(Wlist['W_m'].astype(float), np.eye(Wlist['W_m'].shape[0]))@vecteurs_propres
+        bj = scil.solve(Wlist['W_m'], np.eye(Wlist['W_m'].shape[0]))@np.real(vecteurs_propres)
         fonctionspropres.coefficients = bj
 
         scores = skfda.misc.inner_product_matrix(temp.basis, fonctionspropres.basis)
         varprop = valeurs_propres / np.sum(valeurs_propres)
-        pcafd = {'valeurs_propres': valeurs_propres, 'harmonic': fonctionspropres, 'scores': scores, 'covariance': cov, 'U':bj, 'meanfd': mean_fd}
+        pcafd = {'valeurs_propres': np.real(valeurs_propres), 'harmonic': fonctionspropres, 'scores': scores, 'covariance': cov, 'U':bj, 'meanfd': mean_fd}
 
     #Multivariate here
     else:
@@ -1154,9 +1226,13 @@ def _T_mypcat_fd1(fdobj, Wlist, Ti, corI):
         mat_cov = (rep.T@rep) / np.sum(Ti)
         cov = (Wlist['W_m']@ mat_cov)@(Wlist['W_m'].T)
 
-        valeurs_propres, vecteurs_propres = np.linalg.eig(cov.astype(float))
+        valeurs_propres, vecteurs_propres = scil.eig(cov)
+        indices = valeurs_propres.argsort()
+        valeurs_propres = valeurs_propres[indices[::-1]]
+        vecteurs_propres = vecteurs_propres[indices[::-1]]
 
-        bj = np.linalg.solve(Wlist['W_m'].astype(float), np.eye(Wlist['W_m'].shape[0]))@vecteurs_propres
+        bj = scil.solve(Wlist['W_m'], np.eye(Wlist['W_m'].shape[0]))@vecteurs_propres
+        
         fonctionspropres = fdobj['0']
         fonctionspropres.coefficients = bj
         scores = (coef@Wlist['W_m'])@bj
@@ -1204,13 +1280,12 @@ def _T_hdclassif_dim_choice(ev, n, method, threshold, graph, noise_ctrl, d_set):
             #print(dev)
             #Apply's axis should cover this situation. Try axis=1 in *args if doesn't work
             d = np.apply_along_axis(np.argmax, 1, (dev > threshold).T*(np.arange(0, p-1))*((ev[:,1:] > noise_ctrl)))
-
         elif (method == "bic"):
 
             d = np.repeat(0, K)
             
             for i in range(K):
-                Nmax = np.max(np.where(ev[i] > noise_ctrl))
+                Nmax = np.max(np.nonzero(ev[i] > noise_ctrl)[0]) - 1
                 B = np.empty((Nmax,1))
                 p2 = np.sum(np.invert(np.isnan(ev[i])))
                 Bmax = -np.inf
@@ -1242,39 +1317,39 @@ def _T_hdclassif_dim_choice(ev, n, method, threshold, graph, noise_ctrl, d_set):
         elif method == "grid":
             d = d_set
 
-        else:
-            ev = ev.flatten()
-            p = len(ev)
+    else:
+        ev = ev.flatten()
+        p = len(ev)
 
-            if method == "cattell":
-                dvp = np.abs(np.diff(ev))
-                Nmax = np.max(np.which(ev>noise_ctrl))
-                if p ==2:
-                    d = 1
-                else:
-                    d = np.max(np.which(dvp[0:Nmax] >= threshold*np.max(dvp[0:Nmax])))
-                diff_max = np.max(dvp[0:Nmax])
-
-            elif method == "bic":
+        if method == "cattell":
+            dvp = np.abs(np.diff(ev))
+            Nmax = np.max(np.nonzero(ev>noise_ctrl)[0]) - 1
+            if p ==2:
                 d = 0
-                Nmax = np.max(np.where(ev > noise_ctrl)) - 1
-                B = np.empty((1, Nmax))
-                Bmax = -np.inf
+            else:
+                d = np.max(np.which(dvp[0:Nmax] >= threshold*np.max(dvp[0:Nmax])))
+            diff_max = np.max(dvp[0:Nmax])
 
-                for kdim in range(Nmax):
-                    if d != 0 and kdim > d+10:
-                        break
-                    a = np.sum(ev[0:kdim])/kdim
-                    b = np.sum(ev[(kdim+1):p])/(p-kdim)
-                    if(b <= 0 or a <= 0):
-                        B[kdim] = -np.inf
-                    else:
-                        L2 = -1/2*(kdim*np.log(a) + (p-kdim)*np.log(b)+p*(1+1/2*np.log(2*np.pi)))*N
-                        B[kdim] = 2*L2 - (p+kdim * (p-(kdim + 1)/2)+1)*np.log(N)
+        elif method == "bic":
+            d = 0
+            Nmax = np.max(np.nonzero(ev > noise_ctrl)[0]) - 1
+            B = np.empty((1, Nmax))
+            Bmax = -np.inf
 
-                    if B[kdim] > Bmax:
-                        Bmax = B[kdim]
-                        d = kdim
+            for kdim in range(Nmax):
+                if d != 0 and kdim > d+10:
+                    break
+                a = np.sum(ev[0:kdim])/kdim
+                b = np.sum(ev[(kdim+1):p])/(p-kdim)
+                if(b <= 0 or a <= 0):
+                    B[kdim] = -np.inf
+                else:
+                    L2 = -1/2*(kdim*np.log(a) + (p-kdim)*np.log(b)+p*(1+1/2*np.log(2*np.pi)))*N
+                    B[kdim] = 2*L2 - (p+kdim * (p-(kdim + 1)/2)+1)*np.log(N)
+
+                if B[kdim] > Bmax:
+                    Bmax = B[kdim]
+                    d = kdim
 
     #print(len(B))
     return d
@@ -1284,13 +1359,12 @@ def _T_hdclassift_bic(par, p, dfconstr):
     #mux and mu not used, should we get rid of them?
     model = par['model']
     K = par['K']
-    d = par['d']
-    b = par['b']
-    a = par['a']
-    mu = par['mu']
+    d = np.array(par['d'].data)
+    b = np.array(par['b'].data)
+    a = np.array(par['a'].data)
+    #mu = par['mu']
     N = par['N']
-    prop = par['prop']
-    mux = par['mux']
+    prop = np.array(par['prop'].data)
 
     if len(b) == 1:
         eps = np.sum(prop*d)
@@ -1299,30 +1373,27 @@ def _T_hdclassift_bic(par, p, dfconstr):
         b = b*(n_max-eps) / (p-eps)
         b = np.tile(b, K)
 
-    if len(a) == 1:
+    if len(a.flatten()) == 1:
         #repeat single element
-        a = np.repeat(a, K*max(d)).reshape((K, max(d)))
+        a = np.repeat(a, K*np.max(d)).reshape((K, np.max(d)))
 
-    elif len(a) == K:
+    elif len(a.flatten()) == K:
         #Repeat vector column-wise
-        a = np.tile(a, K*max(d)).reshape((K, max(d))).T
+        a = np.tile(a, np.max(d)).reshape((K, np.max(d))).T
 
-    elif model == "AJBQD":
-        #repeat vector row-wise
-        a = np.tile(a, K*d[0]).reshape((K, d[1]))
 
     if np.nanmin(a) <= 0 or np.any(b < 0):
         return - np.Inf
     
-    if np.isnan(par['loglik']):
+    if np.isnan(np.sum(par['loglik'])):
         som_a = np.zeros(K)
 
         for i in range(K):
-            som_a[i] = np.sum(np.log(a[i, 0:d[i]]))
+            som_a[i] = np.sum(np.log(a[i][0:d[i]]))
         L = -(1/2)*np.sum(prop * (som_a + (p-d) * np.log(b) - 2 * np.log(prop) + p * (1 + np.log(2*np.pi))))*N
 
     else:
-        L = par['loglik'][len(par['loglik'])]
+        L = par['loglik']
 
     if dfconstr == 'no':
         ro = K*(p+1)+K-1
@@ -1331,7 +1402,7 @@ def _T_hdclassift_bic(par, p, dfconstr):
     tot = np.sum(d*(p-(d+1)/2))
     D = np.sum(d)
     d = d[0]
-    to = d*(p-(d+1)/2)
+    #to = d*(p-(d+1)/2)
 
     if model == 'AKJBKQKDK':
         m = ro + tot + D + K
@@ -1350,7 +1421,7 @@ def _T_hdclassift_bic(par, p, dfconstr):
 
     t = par['posterior']
 
-    Z = ((t - np.apply_along_axis(np.max, t, axis=0)) == 0) + 0
+    Z = ( (t - np.atleast_2d(np.apply_along_axis(np.max, 1, t)).T) == 0. ) + 0.
     icl = bic - 2*np.sum(Z*np.log(t + 1.e-15))
 
     return {'bic': bic, 'icl': icl}
@@ -1523,7 +1594,7 @@ def _T_imahalanobis(x, muk, wk, Qk, aki):
 
     Qi = np.matmul(wk, Qk)
 
-    xQu = np.matmul(X, Qi)
+    #xQu = np.matmul(X, Qi)
 
     proj = np.matmul(np.matmul(X, Qi), aki)
 
