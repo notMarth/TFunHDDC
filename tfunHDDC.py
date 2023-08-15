@@ -1,19 +1,20 @@
 #Required Libraries------------------------------------------------------------#
 import skfda
 from sklearn import cluster as clust
+from sklearn.model_selection import ParameterGrid
 from sklearn.utils import Bunch
 import numpy as np
 import warnings
 import pandas as pd
-import math
-import ctypes
-import timeit
+import multiprocessing as multi
+import time
 from scipy import linalg as scil
 import scipy.special as scip
 import scipy.optimize as scio
 #------------------------------------------------------------------------------#
 def check_symmetric(a, tol=1e-8):
     return np.all(np.abs(a-a.T) < tol)
+
 
 class _Table:
     """
@@ -101,6 +102,8 @@ class TFunHDDC:
         self.index = index
         self.bic = bic
         self.icl = icl
+        self.criterion = None
+        self.complexity_all = None
 
     def predict(self, data):
         #TODO check if data Null
@@ -109,13 +112,19 @@ class TFunHDDC:
         #univariate
         x = data.coefficients
 
-        Np = self.N
-
+        #TODO fix this, should be number of basis functions
+        Np = 15
         p = x.shape[1]
         N = x.shape[0]
         if Np != p:
             raise ValueError("New observations should be represented using the same base as for the training set")
-        b = self.b.copy()
+        a = self.a.data.copy()
+        b = self.b.data.copy()
+        d = self.d.data.copy()
+        nux = self.nux.data.copy()
+        mu = self.mu.data.copy()
+        prop = self.prop.data.copy()
+
         b[b<1.e-6] = 1.e-6
         wki = self.Wlist['W_m']
 
@@ -128,86 +137,86 @@ class TFunHDDC:
         match self.model:
             case 'AKJBKQKDK':
                 for i in range(self.K):
-                    s[i] = np.sum(np.log(self.a[i, 0:self.d[i]]))
+                    s[i] = np.sum(np.log(a[i, 0:d[i]]))
                     Qk = self.Q1[f'{i}']
-                    diag2 = np.repeat(1/b[i], self.p-self.d[i])
-                    diag1 = 1/self.a[i, 0:self.d[i]]
-                    aki = np.sqrt(np.diag(np.concatenate(diag1, diag2)))
-                    muki = self.mu[i]
+                    diag2 = np.repeat(1/b[i], p-d[i])
+                    diag1 = 1/a[i, 0:d[i]]
+                    aki = np.sqrt(np.diag(np.concatenate((diag1, diag2))))
+                    muki = mu[i]
 
                     mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
 
                     #scipy logamma vs math lgamma?
-                    K_pen[:, i] = np.log(self.prop[i]) + scip.loggamma( (self.nux[i] + p) / 2) - (1/2) * (s[i] + (p-self.d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(self.nux[i])) + scip.loggamma(self.nux[i] /2) + ( (self.nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / self.nux[i])))
+                    K_pen[:, i] = np.log(prop[i]) + scip.loggamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + scip.loggamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
 
             case 'AKJBQKDK':
                 for i in range(self.K):
-                    s[i] = np.sum(np.log(self.a[i, 0:self.d[i]]))
+                    s[i] = np.sum(np.log(a[i, 0:d[i]]))
                     Qk =self.Q1[f'{i}']
-                    diag2 = np.repeat(1/b[0], self.p-self.d[i])
-                    diag1 = 1/self.a[i, 0:self.d[i]]
-                    aki = np.sqrt(np.diag(np.concatenate(diag1, diag2)))
-                    muki = self.mu[i]
+                    diag2 = np.repeat(1/b[0], p-d[i])
+                    diag1 = 1/a[i, 0:d[i]]
+                    aki = np.sqrt(np.diag(np.concatenate((diag1, diag2))))
+                    muki = mu[i]
                     
                     mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
 
                     #Copied from previous case with b[i] changed to b[1]
                     #scipy logamma vs math lgamma?
-                    K_pen[:, i] = np.log(self.prop[i]) + scip.loggamma( (self.nux[i] + p) / 2) - (1/2) * (s[i] + (p-self.d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(self.nux[i])) + scip.loggamma(self.nux[i] /2) + ( (self.nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / self.nux[i])))
+                    K_pen[:, i] = np.log(prop[i]) + scip.loggamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + scip.loggamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
 
             case 'AKBKQKDK':
-                s[i] = self.d[i]*np.log(self.a[i])
+                s[i] = d[i]*np.log(a[i])
                 Qk = self.Q1[f'{i}']
-                diag2 = np.repeat(1/b[i], self.p-self.d[i])
-                diag1 = np.repeat(1/self.a[i], self.d[i])
-                aki = np.sqrt(np.diag(np.concatenate(diag1, diag2)))
-                muki = self.mu[i]
+                diag2 = np.repeat(1/b[i], p-d[i])
+                diag1 = np.repeat(1/a[i], d[i])
+                aki = np.sqrt(np.diag(np.concatenate((diag1, diag2))))
+                muki = mu[i]
 
                 mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
 
                 #copied from AKJBKQKDK
-                K_pen[:, i] = np.log(self.prop[i]) + scip.loggamma( (self.nux[i] + p) / 2) - (1/2) * (s[i] + (p-self.d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(self.nux[i])) + scip.loggamma(self.nux[i] /2) + ( (self.nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / self.nux[i])))
+                K_pen[:, i] = np.log(prop[i]) + scip.loggamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + scip.loggamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
 
 
             case 'ABKQKDK':
                 for i in range(self.K):
-                    s[i] = self.d[i]*np.log(self.a[0])
+                    s[i] = d[i]*np.log(a[0])
                     Qk = self.Q1[f'{i}']
-                    diag2 = np.repeat(1/b[i], self.p-self.d[i])
-                    diag1 = np.repeat(1/self.a[0], self.d[i])
-                    aki = np.sqrt(np.diag(np.concatenate(diag1, diag2)))
-                    muki = self.mu[i]
+                    diag2 = np.repeat(1/b[i], p-d[i])
+                    diag1 = np.repeat(1/a[0], d[i])
+                    aki = np.sqrt(np.diag(np.concatenate((diag1, diag2))))
+                    muki = mu[i]
 
                     mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
 
                     #copied from AKJBKQKDK
-                    K_pen[:, i] = np.log(self.prop[i]) + scip.loggamma( (self.nux[i] + p) / 2) - (1/2) * (s[i] + (p-self.d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(self.nux[i])) + scip.loggamma(self.nux[i] /2) + ( (self.nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / self.nux[i])))
+                    K_pen[:, i] = np.log(prop[i]) + scip.loggamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + scip.loggamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
 
             case 'AKBQKDK':
-                s[i] = self.d[i]*np.log(self.a[i])
+                s[i] = d[i]*np.log(a[i])
                 Qk = self.Q1[f'{i}']
-                diag2 = np.repeat(1/b[0], self.p-self.d[i])
-                diag1 = np.repeat(1/self.a[i], self.d[i])
-                aki = np.sqrt(np.diag(np.concatenate(diag1, diag2)))
-                muki = self.mu[i]
+                diag2 = np.repeat(1/b[0], p-d[i])
+                diag1 = np.repeat(1/a[i], d[i])
+                aki = np.sqrt(np.diag(np.concatenate((diag1, diag2))))
+                muki = mu[i]
 
                 mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
 
                 #copied from AKJBKQKDK
-                K_pen[:, i] = np.log(self.prop[i]) + scip.loggamma( (self.nux[i] + p) / 2) - (1/2) * (s[i] + (p-self.d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(self.nux[i])) + scip.loggamma(self.nux[i] /2) + ( (self.nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / self.nux[i])))
+                K_pen[:, i] = np.log(prop[i]) + scip.loggamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + scip.loggamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
 
             case 'ABQKDK':
-                s[i] = self.d[i]*np.log(self.a[0])
+                s[i] = d[i]*np.log(a[0])
                 Qk = self.Q1[f'{i}']
-                diag2 = np.repeat(1/b[0], self.p-self.d[i])
-                diag1 = np.repeat(1/self.a[0], self.d[i])
-                aki = np.sqrt(np.diag(np.concatenate(diag1, diag2)))
-                muki = self.mu[i]
+                diag2 = np.repeat(1/b[0], p-d[i])
+                diag1 = np.repeat(1/a[0], d[i])
+                aki = np.sqrt(np.diag(np.concatenate((diag1, diag2))))
+                muki = mu[i]
 
                 mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
 
                 #copied from AKJBKQKDK
-                K_pen[:, i] = np.log(self.prop[i]) + scip.loggamma( (self.nux[i] + p) / 2) - (1/2) * (s[i] + (p-self.d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(self.nux[i])) + scip.loggamma(self.nux[i] /2) + ( (self.nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / self.nux[i])))
+                K_pen[:, i] = np.log(prop[i]) + scip.loggamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + scip.loggamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
 
         kcon = -np.apply_along_axis(np.max, 0, K_pen)
         K_pen += kcon
@@ -225,7 +234,248 @@ class TFunHDDC:
     def __repr__(self):
         return None
     '''
+def dec(mkt, verbose, start_time = 0, totmod=1, backspace_amount=0):
+    return tfunHDDC.hddcwrapper(mkt, verbose, start_time = 0, totmod=1, backspace_amount=0)
 
+def callbackFunc(res):
+    print("Complete!")
+
+def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50, 
+             dfupdate='approx', dfconstr='no', threshold=0.1, itermax=200, 
+             eps=1.e-6, init='random', criterion='bic', d_select='cattell', 
+             init_vector=None, show=True, mini_nb=[5,10], min_individuals=2,
+             mc_cores=1, nb_rep=2, keepAllRes=True, kmeans_control={}, d_max=100,
+             d_range=2, verbose=True):
+    
+    com_dim = None
+    noise_ctrl = 1.e-8
+
+    model = _T_hdc_getTheModel(model, all2models=True)
+    if init == "random" and nb_rep < 20:
+        nb_rep = 20
+
+    if mc_cores > 1:
+        verbose = False
+
+    #Kmeans control here
+
+    BIC = []
+    ICL = []
+
+    fdobj = data.copy()
+
+    if isinstance(fdobj, skfda.FDataBasis):
+        x = fdobj.coefficients
+        p = x.shape[1]
+
+        W = skfda.misc.inner_product_matrix(fdobj.basis, fdobj.basis)
+        W[W<1.e-15] = 0
+        W_m = scil.cholesky(W)
+        dety = scil.det(W)
+        Wlist = {'W': W, 'W_m': W_m, 'dety':dety}
+
+    else:
+        x = fdobj['0'].coefficients
+
+        for i in range(1, len(fdobj)):
+            x = np.c_[x, fdobj[f'{i}'].coefficients]
+
+        p = x.shape[1]
+
+        W_fdobj = []
+        for i in range(len(data)):
+            W_fdobj.append(skfda.misc.inner_product_matrix(data[f'{i}'].basis, data[f'{i}'].basis))
+
+        prow = W_fdobj[-1].shape[0]
+        pcol = len(data)*prow
+        W1 = np.c_[W_fdobj[-1], np.zeros((prow, pcol-W_fdobj[-1].shape[1]))]
+        W_list = {}
+
+        for i in range(1, len(data)):
+            W2 = np.c_[np.zeros((prow, (i)*W_fdobj[-1].shape[1])),
+                    W_fdobj[i],
+                    np.zeros((prow, pcol - (i+1) * W_fdobj[-1].shape[1]))]
+            W_list[f'{i-1}'] = W2
+
+        W_tot = np.concatenate((W1,W_list['0']))
+        if len(data) > 2:
+            for i in range(1, len(data)-1):
+                W_tot = np.concatenate((W_tot, W_list[f'{i}']))
+
+        W_tot[W_tot < 1.e-15] = 0
+        W_m = scil.cholesky(W_tot)
+        dety = scil.det(W_tot)
+        Wlist = {'W':W_tot, 'W_m': W_m, 'dety': dety}
+
+    if not(type(threshold) == list or type(threshold) == np.ndarray):
+        threshold = np.array([threshold])
+
+    if not(type(K) == list or type(K) == np.ndarray):
+        K = np.array([K])
+
+    if len(np.unique(K)) != len(K):
+        warnings.warn("The number of clusters, K, should be unique (repeated values will be removed)")
+        K = np.sort(np.unique(K))
+
+    mkt_list = {}
+    if d_select == 'grid':
+        #Why can't we use multiple values for K here?
+        if len(K) > 1:
+            raise ValueError("When using d_select='grid, K must be only one value (ie. not a list)")
+        
+        #take first element of K since it is a list/array
+        for i in range(K[0]):
+            mkt_list[f'd{i}'] = [str(d_range)]
+        mkt_list.update({'model':model, 'K':[str(a) for a in K], 'threshold':[str(a) for a in threshold]})
+
+        
+
+    else:
+        for i in range(np.max(K)):
+            mkt_list[f'd{i}'] = ['2']
+        mkt_list.update({'model':model, 'K':[str(a) for a in K], 'threshold':[str(a) for a in threshold]})
+
+        
+    
+    mkt_expand = ParameterGrid(mkt_list)
+    mkt_expand = list(mkt_expand)
+    repeat = mkt_expand.copy()
+    for i in range(nb_rep-1):
+        mkt_expand = np.concatenate((mkt_expand, repeat))
+    
+    model = [a['model'] for a in mkt_expand]
+    K = [int(a['K']) for a in mkt_expand]
+    d = {}
+
+    for i in range(max(K)):
+        d[f'{i}'] = [a[f'd{i}'] for a in mkt_expand]
+    
+    if verbose:
+        pass
+
+
+    #TODO can we make this more efficient with the mkts?
+    #mkt_univariate = ['_'.join(list(a.values())) for a in mkt_expand]
+
+    #Pass in dict from mkt_expand
+    def hddcWrapper(mkt, verbose, start_time = 0, totmod=1, backspace_amount=0):
+        model = mkt['model']
+        K = int(mkt['K'])
+        threshold = float(mkt['threshold'])
+
+        d_set = np.repeat(2, K)
+        for i in range(K):
+            d_set[i] = int(mkt[f'd{i}'])
+
+        #TODO may need to modify this from R
+        try:
+            res = _T_funhddc_main1(fdobj=fdobj, wlist=Wlist, K=K, dfstart=dfstart, dfupdate=dfupdate, dfconstr=dfconstr,
+                                    itermax=itermax, model=model, threshold=threshold,
+                                    method=d_select, eps=eps, init=init, init_vector=init_vector,
+                                    mini_nb=mini_nb, min_individuals=min_individuals, noise_ctrl=noise_ctrl,
+                                    com_dim=com_dim, kmeans_control=kmeans_control, d_max=d_max, d_set=d_set, known=None)
+            
+            if verbose:
+                pass
+
+        except Exception as e:
+            raise e
+        
+
+        return res
+    
+
+    nRuns = len(mkt_expand)
+    if nRuns < mc_cores:
+        mc_cores = nRuns
+
+    max_cores = multi.cpu_count()
+    if mc_cores > max_cores:
+        warnings.warn(f"mc_cores was set to a value greater than the maximum number of cores on this system.\nmc_cores will be set to {max_cores}")
+        mc_cores = max_cores
+
+    start_time = time.process_time()
+
+    if mc_cores == 1:
+        #TODO add backspace amount
+        res = [hddcWrapper(a, verbose, start_time, len(mkt_expand)) for a in mkt_expand]
+
+    else:
+        try:
+            p = multi.Pool(mc_cores)
+            '''
+            params = [(x, verbose, start_time, len(mkt_expand)) for x in mkt_expand]
+            with p:
+                res = p.starmap_async(dec, params).get()
+            '''
+            models = [mkt['model'] for mkt in mkt_expand]
+            Ks = [int(mkt['K']) for mkt in mkt_expand]
+            thresholds = [float(mkt['threshold']) for mkt in mkt_expand]
+            d_sets = []
+            for i in range(len(Ks)):
+                d_temp = []
+                for j in range(Ks[i]):
+                    d_temp.append(int(mkt_expand[i][f'd{j}']))
+                d_sets.append(d_temp)
+            
+            with p:
+                params = [(fdobj, Wlist, Ks[i], dfstart, dfupdate, dfconstr, models[i], itermax, thresholds[i], d_select, eps, init, init_vector, mini_nb, min_individuals, noise_ctrl, com_dim, kmeans_control, d_max, d_sets[i], None) for i in range(len(models))]
+                res = p.starmap_async(_T_funhddc_main1, params, callback=callbackFunc).get()
+
+        #TODO add descriptive text here explaining that this is an unknown error
+        except Exception as e:
+            raise e
+        
+    res = np.array(res)
+    loglik_all = np.array([x.loglik if isinstance(x, TFunHDDC) else - np.Inf for x in res])
+    comment_all = np.array([x if isinstance(x, TFunHDDC) else "" for x in res])
+    threshold = np.array([float(x['threshold']) for x in mkt_expand])
+    #TODO check if no models valid here
+
+    n = len(mkt_expand)
+    uniqueModels = mkt_expand[:int(n/nb_rep)]
+    #For each param combo pick best run based on log liklihood
+    #TODO can we simplify the rest of this with something like a dictionary comprehension?
+    #mkt_expand has the first len(mkt_expand)/nb_rep entries unique
+    #What if multiple of the same params gives the same loglik?
+    modelKeep = [(np.argmax(loglik_all[np.nonzero(uniqueModels[x] == mkt_expand)[0]])*len(uniqueModels)) + x for x in range(len(uniqueModels))]
+    
+    # modelCheck = [isinstance(result, TFunHDDC) for result in modelKeep]
+    # if len(modelCheck) == 0:
+    #     return "All models Diverged"
+    
+    # modelKeep = np.array(modelKeep)[modelCheck]
+
+    loglik_all = loglik_all[modelKeep]
+    comment_all = comment_all[modelKeep]
+    chosenRes = res[modelKeep]    
+    
+    bic = [res.bic for res in chosenRes]
+    icl = [res.icl for res in chosenRes]
+    allComplex = [res.complexity for res in chosenRes]
+    model = np.array(model)[modelKeep]
+    threshold = np.array(threshold)[modelKeep]
+    K = np.array(K)[modelKeep]
+    d_keep = {}
+    for i in range(np.max([int(x) for x in K])):
+        d_keep[f'{i}'] = np.array([int(x[f'd{i}']) for x in np.array(mkt_expand)[modelKeep]])
+
+    CRIT = bic if criterion == 'bic' else icl
+    resOrdering = np.sort(CRIT)[::-1]
+
+    qui = np.argmax(CRIT)
+    bestCritRes = chosenRes[qui]
+    bestCritRes.criterion = criterion
+    #is complexity all really necessary?
+    bestCritRes.complexity_all = {'_'.join(mkt_expand[modelKeep][i].values()): allComplex[i] for i in range(len(mkt_expand[modelKeep]))}
+
+    #allcriteria goes here. Do we need it?
+
+    #allresults goes here. Do we need it?
+
+    #R assigns threshold here. Does it not already get assigned during main1?
+
+    return bestCritRes
 
 #TODO add default values
 #*args argument replaces ... in R code
@@ -237,7 +487,6 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
     modelNames = ["AKJBKQKDK", "AKBKQKDK", "ABKQKDK", "AKJBQKDK", "AKBQKDK", 
                   "ABQKDK", "AKJBKQKD", "AKBKQKD", "ABKQKD", "AKJBQKD",
                   "AKBQKD", "ABQKD"]
-    
     #Univariate
     if(type(fdobj) == skfda.FDataBasis):
         data = fdobj.coefficients
@@ -246,12 +495,12 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
     if type(fdobj) == dict:
         #Multivariate
         if len(fdobj.keys() > 1):
-            data = fdobj[0].coefficients
-            for i in range(0, len(fdobj)):
+            data = fdobj['0'].coefficients
+            for i in range(1, len(fdobj)):
                 data = np.c_[data, fdobj[f'{i}'].coefficients]
         #univariate in dict
         else:
-            data = fdobj.coeficients
+            data = fdobj['0'].coeficients
 
     n, p = data.shape
     #com_ev is None (better way of phrasing) instead of = None
@@ -269,8 +518,7 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
     else:
 
         if len(known) != n:
-            print("Known classifications vector not given, or not the same length as the number of samples (see help file)")
-            return None
+            raise ValueError("Known classifications vector not the same length as the number of samples (see help file)")
         
         #TODO find out how to handle missing values. For now, using numpy NaN
 
@@ -278,7 +526,7 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
         #np.isnan(np.sum) is faster than np.isnan(np.min) for the general case
         else:
             if (not np.isnan(np.sum(known))):
-                warnings.warn("No   s in 'known' vector supplied. All values have known classification (parameter estimation only)")
+                warnings.warn("No  s in 'known' vector supplied. All values have known classification (parameter estimation only)")
 
                 test_index = np.linspace(0, n-1, n)
                 kno = np.repeat(1, n)
@@ -507,7 +755,6 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
     #Check if 
     likely = []
     test = np.Inf
-
     # I <= itermax means I + 1 iterations when starting at 0
     while(I < itermax and test >= eps):
         if K > 1:
@@ -520,11 +767,10 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
             #if (any(npsum(np.where(t>1/K,t,0), axis=0) < min_individuals))
             if(np.any(np.sum(t>(1/K), axis=0) < min_individuals)):
                 return "pop<min_individuals"
-        
         #m_step1 called here
         m = _T_funhddt_m_step1(fdobj, wlist, K, t, tw, nux, dfupdate, dfconstr, model, threshold, method, noise_ctrl, com_dim, d_max, d_set)
         nux = m['nux'].copy()
-        
+
         #e_step1 called here
         to = _T_funhddt_e_step1(fdobj, wlist, m, clas, known, kno)
 
@@ -621,10 +867,10 @@ def _T_funhddt_init(fdobj, Wlist, K, t, nux, model, threshold, method, noise_ctr
     
     if type(fdobj) == dict or type(fdobj) == pd.DataFrame:
         #Multivariate
-        if len(fdobj.keys() > 1):
-            x = fdobj[0].coefficients
-            for i in range(0, len(fdobj)):
-                x = np.c_[x, fdobj[f'{i}'].coefficients]
+        if len(fdobj.keys()) > 1:
+            x = fdobj['0'].coefficients.copy()
+            for i in range(1, len(fdobj)):
+                x = np.c_[x, fdobj[f'{i}'].coefficients.copy()]
 
     N = x.shape[0]
     p = x.shape[1]
@@ -658,23 +904,20 @@ def _T_funhddt_init(fdobj, Wlist, K, t, nux, model, threshold, method, noise_ctr
     d = _T_hdclassif_dim_choice(ev, n, method, threshold, False, noise_ctrl, d_set)
     #adjust for Python indices
     d+=1
-
     #Set up Qi matrices
     Q1 = Q.copy()
-    
     for i in range(K):
-        Q[f'{i}'] = Q[f'{i}'][:, 0:d[i]+1]
+        Q[f'{i}'] = Q[f'{i}'][:, 0:d[i]]
 
     #a parameter
-
-    ai = np.repeat(np.NaN, K*(np.max(d))).reshape((K, (np.max(d))))
+    ai = np.repeat(np.NaN, K*(np.max(d))).reshape((K, np.max(d)))
     if np.isin(model, np.array(['AKJBKQKDK', 'AKJBQKDK'])):
         for i in range(K):
             ai[i, 0:d[i]] = ev[i, 0:d[i]]
 
     elif np.isin(model, np.array(['AKBKQKDK', 'AKBQKDK'])):
         for i in range(K):
-            ai[i] = np.repeat(np.sum(ev[i, 0:d[i]])/(d[i]), np.max(d))
+            ai[i] = np.repeat(np.sum(ev[i, 0:d[i]])/d[i], np.max(d))
 
     else:
         a = 0
@@ -717,10 +960,8 @@ def _T_initmypca_fd1(fdobj, Wlist, Ti):
         temp = fdobj.copy()
         mean_fd = fdobj.copy()
         coef = fdobj.coefficients.copy()
-        #print(coef)
         #by default numpy cov function uses rows as variables and columns as observations, opposite to R
         mat_cov = np.cov(m=coef, aweights=Ti, ddof=0, rowvar=False)
-        #print(Wlist['W_m'])
         #may need to try this with other params depending on how weights are passed in
         coefmean = np.average(coef, axis=0, weights=Ti)
         #Verify this
@@ -729,24 +970,16 @@ def _T_initmypca_fd1(fdobj, Wlist, Ti):
         mean_fd.coefficients = coefmean
         cov = (Wlist['W_m']@mat_cov)@(Wlist['W_m'].T)
         if not check_symmetric(cov, 1.e-12):
-            print(cov - cov.T < 1.e-12)
             ind = np.nonzero(cov - cov.T > 1.e-12)
             cov[ind] = cov.T[ind]
-            print(np.all(cov - cov.T < 1.e-12))
+            
 
-            raise ValueError()
-
-        # for i in range(len(cov)):
-        #     for j in range(len(cov)):
-        #         if cov[i, j] != cov[j,i]:
-        #             return i, j
-        #         print(cov[i,j] == cov[j,i])
+        
         valeurs_propres, vecteurs_propres = scil.eig(cov)
         #TODO This may make the program slower: see if not needed
         #indices = valeurs_propres.argsort()
         #valeurs_propres = valeurs_propres[indices[::-1]]
         #vecteurs_propres = vecteurs_propres[indices[::-1]]
-        #print(valeurs_propres)
         fonctionspropres = fdobj.copy()
         bj = scil.solve(Wlist['W_m'], np.eye(Wlist['W_m'].shape[0]))@np.real(vecteurs_propres)
         fonctionspropres.coefficients = bj
@@ -761,14 +994,12 @@ def _T_initmypca_fd1(fdobj, Wlist, Ti):
         temp = fdobj.copy()
         for i in range(len(fdobj)):
 
-            #TODO Start at 0? or should we start at 1?
             mean_fd[f'{i}'] = temp[f'{i}'].copy()
 
         coef = temp['0'].coefficients
         for i in range(1, len(fdobj)):
             coef = np.c_[coef, temp[f'{i}'].coefficients.copy()]
 
-        #print(coef)
         mat_cov = np.cov(m=coef, aweights=Ti, ddof=0, rowvar=False)
         coefmean = np.average(coef, axis=0, weights=Ti)
 
@@ -784,22 +1015,25 @@ def _T_initmypca_fd1(fdobj, Wlist, Ti):
         for i in range(1, len(fdobj)):
             tempi = temp[f'{i}'].copy()
             n_lead = n_lead + n_var
-            #R doesn't transpose this here, might need shape[1] instead
-            #print(temp[f'{i}'].coefficients)
+            
             n_var = temp[f'{i}'].coefficients.shape[1]
             tempi.coefficients = np.apply_along_axis(lambda row: row - coefmean[(n_lead):(n_var + n_lead)], axis=1, arr=tempi.coefficients)
             mean_fd[f'{i}'].coefficients = coefmean[(n_lead):(n_var + n_lead)]
 
         cov = (Wlist['W_m']@mat_cov)@(Wlist['W_m'].T)
+        if not check_symmetric(cov, 1.e-12):
+            ind = np.nonzero(cov - cov.T > 1.e-12)
+            cov[ind] = cov.T[ind]
+
         valeurs_propres, vecteurs_propres = scil.eig(cov)
-        bj = scil.solve(Wlist['W_m'], np.eye(Wlist['W_m'].shape[0]))@vecteurs_propres
+        bj = scil.solve(Wlist['W_m'], np.eye(Wlist['W_m'].shape[0]))@np.real(vecteurs_propres)
         fonctionspropres = temp['0'].copy()
         fonctionspropres.coefficients = bj
         scores = (coef@Wlist['W'])@bj
 
         varprop = valeurs_propres / np.sum(valeurs_propres)
 
-        ipcafd = {'valeurs_propres': valeurs_propres, 'harmonic': fonctionspropres,
+        ipcafd = {'valeurs_propres': np.real(valeurs_propres), 'harmonic': fonctionspropres,
                   'scores': scores, 'covariance': cov, 'U': bj, 'varprop': varprop,
                   'meanfd': mean_fd, 'mux': coefmean}
 
@@ -817,16 +1051,16 @@ def _T_funhddt_twinit(fdobj, wlist, par, nux):
     #Should also work for dataframe (converts to pandas dataframe)
     #Will be changed outside of R testing so that the expected element in the
     #dict or dataframs is an FDataBasis
-    if type(fdobj) == dict or type(fdobj) == pd.DataFrame:
+    if type(fdobj) == dict:
         #Multivariate
         #Here in R, the first element will be named '1'
         if len(fdobj.keys()) > 1:
-            x = np.transpose(fdobj['1']['coefficients'])
-            for i in range(0, len(fdobj)):
-                x = np.c_[x, np.transpose(fdobj[f'{i}']['coefficients'])]
+            x = fdobj['0'].coefficients
+            for i in range(1, len(fdobj)):
+                x = np.c_[x, fdobj[f'{i}'].coefficients]
         #univariate
         else:
-            x = fdobj['coefficients'].T
+            x = fdobj['0'].coefficients
 
     p = x.shape[1]
     n = x.shape[0]
@@ -910,7 +1144,6 @@ def _T_funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
 
         Qk = Q1[f"{i}"]
         aki = np.sqrt(np.diag(np.concatenate((1/a[i, 0:int(d[i])],np.repeat(1/b[i], p-int(d[i])) ))))
-        #print(aki)
         muki = mu[i]
 
         Wki = Wlist["W_m"]
@@ -927,17 +1160,13 @@ def _T_funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
     ft = np.exp(K_pen)
     ft_den = np.sum(ft, axis=1)
     kcon = - np.apply_along_axis(np.max, 1, K_pen)
-    #print(K_pen)
-    #print(kcon)
+   
     K_pen = K_pen + np.atleast_2d(kcon).T
     num = np.exp(K_pen)
-    #print(num)
-    #print(np.sum(num, axis=1))
     t = num / np.atleast_2d(np.sum(num, axis=1)).T
-
+    #TODO might speed up a bit if we use num variable here
     L1 = np.sum(np.log(ft_den))
     L = np.sum(np.log(np.sum(np.exp(K_pen), axis=1)) - kcon)
-
     #Why assign these if they get reassigned immediately?
     #trow = N
     #tcol = K
@@ -968,13 +1197,13 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
 
     if type(fdobj) == dict:
         #Multivariate case
-        if len(fdobj.keys() > 1):
-            x = fdobj[0].coefficients
-            for i in range(0, len(fdobj)):
+        if len(fdobj.keys()) > 1:
+            x = fdobj['0'].coefficients
+            for i in range(1, len(fdobj)):
                 x = np.c_[x, fdobj[f'{i}'].coefficients]
         #univariate but as dict
         else:
-            x = fdobj[0].coeficients
+            x = fdobj['0'].coeficients
 
     N = x.shape[0]
     p = x.shape[1]
@@ -1074,7 +1303,6 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
             b = b+remainEV*prop[i]
         bi[0:K] = b/(min(N,p)-eps)
 
-    #print(bi)
     result = {'model':model, "K": K, "d":d, "a":ai, "b": bi, "mu":mu, "prop": prop, "nux":nux, "ev":ev, "Q":Q, "fpcaobj":fpcaobj, "Q1":Q1}
     return result        
 
@@ -1094,10 +1322,10 @@ def _T_tyxf7(dfconstr, nux, n, t, tw, K, p, N):
 
         #scipy digamma is slow? https://gist.github.com/timvieira/656d9c74ac5f82f596921aa20ecb6cc8
         for i in range(0, K):
-            constn = 1 + (1/n[i]) * np.sum(t[:, i] * (np.log(tw[:, i]) - tw[:, i])) + scip.psi((dfoldg[i] + p)/2) - np.log((dfoldg[i] + p)/2)
-            temp = scip.psi((dfoldg[i] + p)/2)
+            constn = 1 + (1/n[i]) * np.sum(t[:, i] * (np.log(tw[:, i]) - tw[:, i])) + scip.digamma((dfoldg[i] + p)/2) - np.log((dfoldg[i] + p)/2)
+            temp = scip.digamma((dfoldg[i] + p)/2)
             
-            f = lambda v : np.log(v/2) - scip.psi(v/2) + constn
+            f = lambda v : np.log(v/2) - scip.digamma(v/2) + constn
           
             #Verify this outputs the same as R: may need to set rtol to 0
             newnux[i] = scio.brentq(f, 0.0001, 1000, xtol=0.00001)
@@ -1111,9 +1339,9 @@ def _T_tyxf7(dfconstr, nux, n, t, tw, K, p, N):
     else:
         dfoldg = nux[0]
 
-        constn = 1 + (1/N) * np.sum(t *(np.log(tw) - tw)) + scip.psi( (dfoldg + p) / 2) - np.log( (dfoldg + p) / 2)
+        constn = 1 + (1/N) * np.sum(t *(np.log(tw) - tw)) + scip.digamma( (dfoldg + p) / 2) - np.log( (dfoldg + p) / 2)
 
-        f = lambda v : np.log(v/2) - scip.psi(v/2) + constn
+        f = lambda v : np.log(v/2) - scip.digamma(v/2) + constn
             #Verify this outputs the same as R: may need to set rtol to 0
         
         dfsamenewg = scio.brentq(f, a=0.0001, b=1000, xtol=0.01)
@@ -1135,11 +1363,11 @@ def _T_tyxf8(dfconstr, nux, n, t, tw, K, p, N):
         dfoldg = nux.copy()
         
         for i in range(0, K):
-            constn = 1 + (1 / n[i]) * np.sum(t[:, i] * (np.log(tw[:, i]) - tw[:, i])) + scip.psi((dfoldg[i] + p)/2) - np.log( (dfoldg[i] + p)/2)
-            temp = scip.psi((dfoldg[i] + p)/2)
+            constn = 1 + (1 / n[i]) * np.sum(t[:, i] * (np.log(tw[:, i]) - tw[:, i])) + scip.digamma((dfoldg[i] + p)/2) - np.log( (dfoldg[i] + p)/2)
+            temp = scip.digamma((dfoldg[i] + p)/2)
             
             constn = -constn
-            newnux[i] = (-np.exp(constn) + 2 * (np.exp(constn)) * (np.exp(scip.psi(dfoldg[i] / 2)) - ( (dfoldg[i]/2) - (1/2)))) / (1 - np.exp(constn))
+            newnux[i] = (-np.exp(constn) + 2 * (np.exp(constn)) * (np.exp(scip.digamma(dfoldg[i] / 2)) - ( (dfoldg[i]/2) - (1/2)))) / (1 - np.exp(constn))
 
             if newnux[i] > 200:
                 newnux[i] = 200.
@@ -1149,10 +1377,10 @@ def _T_tyxf8(dfconstr, nux, n, t, tw, K, p, N):
 
     else:
         dfoldg = nux[0]
-        constn = 1 + (1 / N) * np.sum(t * (np.log(tw) - tw)) + scip.psi((dfoldg + p)/2) - np.log( (dfoldg + p)/2)
+        constn = 1 + (1 / N) * np.sum(t * (np.log(tw) - tw)) + scip.digamma((dfoldg + p)/2) - np.log( (dfoldg + p)/2)
         constn = -constn
 
-        dfsamenewg = (-np.exp(constn) + 2 * (np.exp(constn)) * (np.exp(scip.psi(dfoldg / 2)) - ( (dfoldg/2) - (1/2)))) / (1 - np.exp(constn))
+        dfsamenewg = (-np.exp(constn) + 2 * (np.exp(constn)) * (np.exp(scip.digamma(dfoldg / 2)) - ( (dfoldg/2) - (1/2)))) / (1 - np.exp(constn))
 
         if dfsamenewg > 200:
             dfsamenewg = 200.
@@ -1175,18 +1403,13 @@ def _T_mypcat_fd1(fdobj, Wlist, Ti, corI):
         temp.coefficients = np.apply_along_axis(lambda row: row - coefmean, axis=1, arr=temp.coefficients)
         mean_fd.coefficients = coefmean
         coef = temp.coefficients.copy().T
-        #print(coef)
         rep = (_T_repmat(np.sqrt(corI), n=coef.shape[0], p=1) * coef).T
         mat_cov = (rep.T@rep) / np.sum(Ti)
-        #print(rep)
         cov = (Wlist['W_m']@ mat_cov)@(Wlist['W_m'].T)
         if not check_symmetric(cov, 1.e-12):
-            print(cov - cov.T < 1.e-12)
             ind = np.nonzero(cov - cov.T > 1.e-12)
             cov[ind] = cov.T[ind]
-            print(np.all(cov - cov.T < 1.e-12))
 
-            raise ValueError()
 
         valeurs_propres, vecteurs_propres = scil.eig(cov)
         #indices = valeurs_propres.argsort()
@@ -1212,26 +1435,26 @@ def _T_mypcat_fd1(fdobj, Wlist, Ti, corI):
 
         for i in range(len(fdobj)):
             #Check this element-wise multiplication
-            coefmean = np.apply_along_axis(np.sum, axis=1, arr=np.atleast_2d(np.atleast_2d(np.atleast_2d(corI).T@np.atleast_2d(np.repeat(1, fdobj[f'{i}'].coefficients.shape[1]))).T * temp['f{i}'].coefficients.T)) / np.sum(corI)
+            coefmean = np.apply_along_axis(np.sum, axis=1, arr=np.atleast_2d(np.atleast_2d(np.atleast_2d(corI).T@np.atleast_2d(np.repeat(1, fdobj[f'{i}'].coefficients.shape[1]))).T * temp[f'{i}'].coefficients.T)) / np.sum(corI)
+            temp[f'{i}'].coefficients = np.apply_along_axis(lambda row: row - coefmean, axis=1, arr=temp[f'{i}'].coefficients)
             mean_fd[f'{i}'].coefficients = coefmean
         
         #R transposes here
-        coef = temp['0'].coefficients.copy().T
+        coef = temp['0'].coefficients.copy()
 
         for i in range(1, len(fdobj)):
-            #R transposes here
-            coef = np.c_[coef, temp[f'{i}'].coefficients.copy().T]
+            coef = np.c_[coef, temp[f'{i}'].coefficients.copy()]
 
-        rep = (_T_repmat(np.sqrt(corI), n=coef.shape[0], p=1) * coef).T
+        rep = (_T_repmat(np.sqrt(corI), n=coef.shape[1], p=1) * coef).T
         mat_cov = (rep.T@rep) / np.sum(Ti)
         cov = (Wlist['W_m']@ mat_cov)@(Wlist['W_m'].T)
 
         valeurs_propres, vecteurs_propres = scil.eig(cov)
-        indices = valeurs_propres.argsort()
-        valeurs_propres = valeurs_propres[indices[::-1]]
-        vecteurs_propres = vecteurs_propres[indices[::-1]]
+        # indices = valeurs_propres.argsort()
+        # valeurs_propres = valeurs_propres[indices[::-1]]
+        # vecteurs_propres = vecteurs_propres[indices[::-1]]
 
-        bj = scil.solve(Wlist['W_m'], np.eye(Wlist['W_m'].shape[0]))@vecteurs_propres
+        bj = scil.solve(Wlist['W_m'], np.eye(Wlist['W_m'].shape[0]))@np.real(vecteurs_propres)
         
         fonctionspropres = fdobj['0']
         fonctionspropres.coefficients = bj
@@ -1239,7 +1462,7 @@ def _T_mypcat_fd1(fdobj, Wlist, Ti, corI):
 
         varprop = valeurs_propres/np.sum(valeurs_propres)
 
-        pcafd = {'valeurs_propres': valeurs_propres, 'harmonic': fonctionspropres, 'scores': scores,
+        pcafd = {'valeurs_propres': np.real(valeurs_propres), 'harmonic': fonctionspropres, 'scores': scores,
                  'covariance': cov, 'U':bj, 'varprop': varprop, 'meanfd': mean_fd}
 
     return pcafd
@@ -1251,7 +1474,7 @@ def _T_hddc_ari(x, y):
     if type(y) != np.ndarray:
         y = np.array(y)
 
-    tab = pd.crosstab(x, y)._data
+    tab = pd.crosstab(x, y).values
     if np.all(tab.shape == (1,1)): return 1
     a = np.sum(scip.binom(tab, 2))
     b = np.sum(scip.binom(np.sum(tab, axis=1), 2)) - a
@@ -1273,11 +1496,8 @@ def _T_hdclassif_dim_choice(ev, n, method, threshold, graph, noise_ctrl, d_set):
         if (method == "cattell"):
             #Trivial tests show that diff does the same thing in Python that it does in R
             dev = np.abs(np.apply_along_axis(np.diff, 1, ev))
-            #print(dev)
             max_dev = np.apply_along_axis(np.nanmax, 1, dev)
-            #print(max_dev)
             dev = (dev / np.repeat(max_dev, p-1).reshape(dev.shape)).T
-            #print(dev)
             #Apply's axis should cover this situation. Try axis=1 in *args if doesn't work
             d = np.apply_along_axis(np.argmax, 1, (dev > threshold).T*(np.arange(0, p-1))*((ev[:,1:] > noise_ctrl)))
         elif (method == "bic"):
@@ -1305,8 +1525,7 @@ def _T_hdclassif_dim_choice(ev, n, method, threshold, graph, noise_ctrl, d_set):
                         #Adjusted for python indices
                         L2 = -1/2*((kdim+1)*np.log(a) + (p2 - (kdim + 1))*np.log(b) - 2*np.log(prop[i]) +p2*(1+1/2*np.log(2*np.pi))) * n[i]
                         B[kdim] = 2*L2 - (p2+(kdim+1)*(p2-(kdim+2)/2)+1) * np.log(n[i])
-                        #print(np.log(n[i]))
-                        #print(L2)
+                       
                     if B[kdim] > Bmax:
                         Bmax = B[kdim]
                         d[i] = kdim
@@ -1315,7 +1534,7 @@ def _T_hdclassif_dim_choice(ev, n, method, threshold, graph, noise_ctrl, d_set):
                 None
 
         elif method == "grid":
-            d = d_set
+            d = d_set.copy()
 
     else:
         ev = ev.flatten()
@@ -1327,7 +1546,7 @@ def _T_hdclassif_dim_choice(ev, n, method, threshold, graph, noise_ctrl, d_set):
             if p ==2:
                 d = 0
             else:
-                d = np.max(np.which(dvp[0:Nmax] >= threshold*np.max(dvp[0:Nmax])))
+                d = np.max(np.nonzero(dvp[0:Nmax] >= threshold*np.max(dvp[0:Nmax]))[0])
             diff_max = np.max(dvp[0:Nmax])
 
         elif method == "bic":
@@ -1351,7 +1570,8 @@ def _T_hdclassif_dim_choice(ev, n, method, threshold, graph, noise_ctrl, d_set):
                     Bmax = B[kdim]
                     d = kdim
 
-    #print(len(B))
+    if type(d) != np.ndarray:
+        d=np.array([d])
     return d
 
 
@@ -1359,6 +1579,7 @@ def _T_hdclassift_bic(par, p, dfconstr):
     #mux and mu not used, should we get rid of them?
     model = par['model']
     K = par['K']
+    #d already adjusted for Python indices
     d = np.array(par['d'].data)
     b = np.array(par['b'].data)
     a = np.array(par['a'].data)
@@ -1371,7 +1592,7 @@ def _T_hdclassift_bic(par, p, dfconstr):
         #get ncol from ev
         n_max = par['ev'].shape[1]
         b = b*(n_max-eps) / (p-eps)
-        b = np.tile(b, K)
+        b = np.repeat(b, K)
 
     if len(a.flatten()) == 1:
         #repeat single element
@@ -1470,19 +1691,21 @@ def _T_hdc_getComplexityt(par, p, dfconstr):
     return m
 
 def _T_hdc_getTheModel(model, all2models = False):
-    
     model_in = model
     #is the model a list or array?
     try:
-        new_model = np.array(model,dtype='<U9')
-        model = np.array(model)
+        if type(model) == np.ndarray or type(model) == list:
+            new_model = np.array(model,dtype='<U9')
+            model = np.array(model)
+        else:
+            new_model = np.array([model],dtype='<U9')
+            model = np.array([model])
     except:
         raise ValueError("Model needs to be an array or list")
 
     #one-dimensional please
     if(model.ndim > 1):
         raise ValueError("The argument 'model' must be 1-dimensional")
-    
     #check for invalid values
     if type(model[0]) != np.str_:
         if np.any(np.apply_along_axis(np.isnan, 0, model)):
@@ -1585,7 +1808,6 @@ def _T_imahalanobis(x, muk, wk, Qk, aki):
     #C code not working for now, try compiling dll on current machine?
     #so_file = "./src/TFunHDDC.so"
     #c_lib = ctypes.CDLL(so_file)
-    #print(type(c_lib.imahalanobis()))
 
     p = x.shape[1]
     N = x.shape[0]
