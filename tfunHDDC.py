@@ -11,7 +11,17 @@ import time
 from scipy import linalg as scil
 import scipy.special as scip
 import scipy.optimize as scio
+import math
+from shutil import get_terminal_size
 #------------------------------------------------------------------------------#
+
+#GLOBALS
+LIST_TYPES = (list, np.ndarray)
+UNKNOWNS = (np.NaN, np.inf, -np.inf, None)
+INT_TYPES = (int, np.integer)
+FLOAT_TYPES = (float, np.floating)
+NUMERIC_TYPES = (INT_TYPES, FLOAT_TYPES)
+
 def check_symmetric(a, tol=1e-8):
     return np.all(np.abs(a-a.T) < tol)
 
@@ -104,13 +114,15 @@ class TFunHDDC:
         self.icl = icl
         self.criterion = None
         self.complexity_all = None
+        self.allCriteria = None
+        self.allRes = None
 
     def predict(self, data):
         #TODO check if data Null
         #TODO figure out what .T_myCallAlerts is doing
 
         #univariate
-        x = data.coefficients
+        x = data.coefficients.copy()
 
         #TODO fix this, should be number of basis functions
         Np = 15
@@ -124,21 +136,20 @@ class TFunHDDC:
         nux = self.nux.data.copy()
         mu = self.mu.data.copy()
         prop = self.prop.data.copy()
-
         b[b<1.e-6] = 1.e-6
         wki = self.Wlist['W_m']
 
-        t = np.zeros((self.N, self.K))
-        mah_pen = np.zeros((self.N, self.K))
-        K_pen = np.zeros((self.N, self.K))
-        num = np.zeros((self.N, self.K))
+        t = np.zeros((N, self.K))
+        mah_pen = np.zeros((N, self.K))
+        K_pen = np.zeros((N, self.K))
+        num = np.zeros((N, self.K))
         s = np.repeat(0., self.K)
 
         match self.model:
             case 'AKJBKQKDK':
                 for i in range(self.K):
                     s[i] = np.sum(np.log(a[i, 0:d[i]]))
-                    Qk = self.Q1[f'{i}']
+                    Qk = self.Q1[f'{i}'].copy()
                     diag2 = np.repeat(1/b[i], p-d[i])
                     diag1 = 1/a[i, 0:d[i]]
                     aki = np.sqrt(np.diag(np.concatenate((diag1, diag2))))
@@ -147,7 +158,7 @@ class TFunHDDC:
                     mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
 
                     #scipy logamma vs math lgamma?
-                    K_pen[:, i] = np.log(prop[i]) + scip.loggamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + scip.loggamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
+                    K_pen[:, i] = np.log(prop[i]) + math.lgamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + math.lgamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
 
             case 'AKJBQKDK':
                 for i in range(self.K):
@@ -162,20 +173,21 @@ class TFunHDDC:
 
                     #Copied from previous case with b[i] changed to b[1]
                     #scipy logamma vs math lgamma?
-                    K_pen[:, i] = np.log(prop[i]) + scip.loggamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + scip.loggamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
+                    K_pen[:, i] = np.log(prop[i]) + math.lgamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + math.lgamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
 
             case 'AKBKQKDK':
-                s[i] = d[i]*np.log(a[i])
-                Qk = self.Q1[f'{i}']
-                diag2 = np.repeat(1/b[i], p-d[i])
-                diag1 = np.repeat(1/a[i], d[i])
-                aki = np.sqrt(np.diag(np.concatenate((diag1, diag2))))
-                muki = mu[i]
+                for i in range(self.K):
+                    s[i] = d[i]*np.log(a[i])
+                    Qk = self.Q1[f'{i}']
+                    diag2 = np.repeat(1/b[i], p-d[i])
+                    diag1 = np.repeat(1/a[i], d[i])
+                    aki = np.sqrt(np.diag(np.concatenate((diag1, diag2))))
+                    muki = mu[i]
 
-                mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
+                    mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
 
-                #copied from AKJBKQKDK
-                K_pen[:, i] = np.log(prop[i]) + scip.loggamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + scip.loggamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
+                    #copied from AKJBKQKDK
+                    K_pen[:, i] = np.log(prop[i]) + math.lgamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + math.lgamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
 
 
             case 'ABKQKDK':
@@ -190,41 +202,43 @@ class TFunHDDC:
                     mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
 
                     #copied from AKJBKQKDK
-                    K_pen[:, i] = np.log(prop[i]) + scip.loggamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + scip.loggamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
+                    K_pen[:, i] = np.log(prop[i]) + math.lgamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + math.lgamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
 
             case 'AKBQKDK':
-                s[i] = d[i]*np.log(a[i])
-                Qk = self.Q1[f'{i}']
-                diag2 = np.repeat(1/b[0], p-d[i])
-                diag1 = np.repeat(1/a[i], d[i])
-                aki = np.sqrt(np.diag(np.concatenate((diag1, diag2))))
-                muki = mu[i]
+                for i in range(self.K):
+                    s[i] = d[i]*np.log(a[i])
+                    Qk = self.Q1[f'{i}']
+                    diag2 = np.repeat(1/b[0], p-d[i])
+                    diag1 = np.repeat(1/a[i], d[i])
+                    aki = np.sqrt(np.diag(np.concatenate((diag1, diag2))))
+                    muki = mu[i]
 
-                mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
+                    mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
 
-                #copied from AKJBKQKDK
-                K_pen[:, i] = np.log(prop[i]) + scip.loggamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + scip.loggamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
+                    #copied from AKJBKQKDK
+                    K_pen[:, i] = np.log(prop[i]) + math.lgamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + math.lgamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
 
             case 'ABQKDK':
-                s[i] = d[i]*np.log(a[0])
-                Qk = self.Q1[f'{i}']
-                diag2 = np.repeat(1/b[0], p-d[i])
-                diag1 = np.repeat(1/a[0], d[i])
-                aki = np.sqrt(np.diag(np.concatenate((diag1, diag2))))
-                muki = mu[i]
+                for i in range(self.K):
+                    s[i] = d[i]*np.log(a[0])
+                    Qk = self.Q1[f'{i}']
+                    diag2 = np.repeat(1/b[0], p-d[i])
+                    diag1 = np.repeat(1/a[0], d[i])
+                    aki = np.sqrt(np.diag(np.concatenate((diag1, diag2))))
+                    muki = mu[i]
 
-                mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
+                    mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
 
-                #copied from AKJBKQKDK
-                K_pen[:, i] = np.log(prop[i]) + scip.loggamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + scip.loggamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
+                    #copied from AKJBKQKDK
+                    K_pen[:, i] = np.log(prop[i]) + math.lgamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + math.lgamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
 
-        kcon = -np.apply_along_axis(np.max, 0, K_pen)
-        K_pen += kcon
+        kcon = -np.apply_along_axis(np.max, 1, K_pen)
+        K_pen += np.atleast_2d(kcon).T
         num = np.exp(K_pen)
-        t = num / np.sum(num, axis=0)
+        t = num / np.atleast_2d(np.sum(num, axis=1)).T
 
-        cls = np.argmax(t, axis=1)
-        return {'t': t, 'class': cls}
+        cl = np.argmax(t, axis=1)
+        return {'t': t, 'class': cl}
     '''
     #Try returning models + diverged?
     def __str__(self):
@@ -234,21 +248,21 @@ class TFunHDDC:
     def __repr__(self):
         return None
     '''
-def dec(mkt, verbose, start_time = 0, totmod=1, backspace_amount=0):
-    return tfunHDDC.hddcwrapper(mkt, verbose, start_time = 0, totmod=1, backspace_amount=0)
 
 def callbackFunc(res):
     print("Complete!")
 
-def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50, 
+def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50., 
              dfupdate='approx', dfconstr='no', threshold=0.1, itermax=200, 
              eps=1.e-6, init='random', criterion='bic', d_select='cattell', 
              init_vector=None, show=True, mini_nb=[5,10], min_individuals=2,
-             mc_cores=1, nb_rep=2, keepAllRes=True, kmeans_control={}, d_max=100,
+             mc_cores=1, nb_rep=2, keepAllRes=True, kmeans_control={'n_init':1, 'max_iter':10, 'algorithm':'lloyd'}, d_max=100,
              d_range=2, verbose=True):
     
     com_dim = None
     noise_ctrl = 1.e-8
+
+    _T_hddc_control(locals())
 
     model = _T_hdc_getTheModel(model, all2models=True)
     if init == "random" and nb_rep < 20:
@@ -256,8 +270,6 @@ def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50,
 
     if mc_cores > 1:
         verbose = False
-
-    #Kmeans control here
 
     BIC = []
     ICL = []
@@ -350,15 +362,14 @@ def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50,
     for i in range(max(K)):
         d[f'{i}'] = [a[f'd{i}'] for a in mkt_expand]
     
-    if verbose:
-        pass
-
 
     #TODO can we make this more efficient with the mkts?
     #mkt_univariate = ['_'.join(list(a.values())) for a in mkt_expand]
 
     #Pass in dict from mkt_expand
-    def hddcWrapper(mkt, verbose, start_time = 0, totmod=1, backspace_amount=0):
+    def hddcWrapper(mkt, verbose, start_time = 0, totmod=1):
+        modelNo = mkt[1]
+        mkt = mkt[0]
         model = mkt['model']
         K = int(mkt['K'])
         threshold = float(mkt['threshold'])
@@ -376,7 +387,7 @@ def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50,
                                     com_dim=com_dim, kmeans_control=kmeans_control, d_max=d_max, d_set=d_set, known=None)
             
             if verbose:
-                pass
+                _T_estimateTime(stage=modelNo, start_time=start_time, totmod=totmod)
 
         except Exception as e:
             raise e
@@ -397,7 +408,11 @@ def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50,
     start_time = time.process_time()
 
     if mc_cores == 1:
-        #TODO add backspace amount
+        if verbose:
+            _T_estimateTime("init")
+            #Add model numbers if we are tracking time
+            mkt_expand = np.c_[mkt_expand, np.arange(0, len(mkt_expand))]
+
         res = [hddcWrapper(a, verbose, start_time, len(mkt_expand)) for a in mkt_expand]
 
     else:
@@ -425,12 +440,20 @@ def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50,
         #TODO add descriptive text here explaining that this is an unknown error
         except Exception as e:
             raise e
-        
+    if verbose:
+        mkt_expand = mkt_expand[:,0]
     res = np.array(res)
     loglik_all = np.array([x.loglik if isinstance(x, TFunHDDC) else - np.Inf for x in res])
-    comment_all = np.array([x if isinstance(x, TFunHDDC) else "" for x in res])
+    comment_all = np.array(["" if isinstance(x, TFunHDDC) else x for x in res])
+
     threshold = np.array([float(x['threshold']) for x in mkt_expand])
-    #TODO check if no models valid here
+
+    if np.all(np.invert(np.isfinite(loglik_all))):
+        warnings.warn("All models diverged")
+
+        #TODO do we need to add allcriteria here?
+
+        return {'model': model, 'K': K, 'threshold':threshold, 'LL':loglik_all, 'BIC': None, 'comment': comment_all}
 
     n = len(mkt_expand)
     uniqueModels = mkt_expand[:int(n/nb_rep)]
@@ -438,8 +461,10 @@ def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50,
     #TODO can we simplify the rest of this with something like a dictionary comprehension?
     #mkt_expand has the first len(mkt_expand)/nb_rep entries unique
     #What if multiple of the same params gives the same loglik?
-    modelKeep = [(np.argmax(loglik_all[np.nonzero(uniqueModels[x] == mkt_expand)[0]])*len(uniqueModels)) + x for x in range(len(uniqueModels))]
+    #modelKeep = [(np.argmax(loglik_all[np.nonzero(uniqueModels[x] == mkt_expand)[0]])*len(uniqueModels)) + x for x in range(len(uniqueModels))]
     
+    modelKeep = np.arange(0, len(res))
+
     # modelCheck = [isinstance(result, TFunHDDC) for result in modelKeep]
     # if len(modelCheck) == 0:
     #     return "All models Diverged"
@@ -450,9 +475,9 @@ def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50,
     comment_all = comment_all[modelKeep]
     chosenRes = res[modelKeep]    
     
-    bic = [res.bic for res in chosenRes]
-    icl = [res.icl for res in chosenRes]
-    allComplex = [res.complexity for res in chosenRes]
+    bic = [res.bic if isinstance(res, TFunHDDC) else -np.Inf for res in chosenRes]
+    icl = [res.icl if isinstance(res, TFunHDDC) else -np.Inf for res in chosenRes]
+    allComplex = [res.complexity if isinstance(res, TFunHDDC) else -np.Inf for res in chosenRes]
     model = np.array(model)[modelKeep]
     threshold = np.array(threshold)[modelKeep]
     K = np.array(K)[modelKeep]
@@ -461,16 +486,41 @@ def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50,
         d_keep[f'{i}'] = np.array([int(x[f'd{i}']) for x in np.array(mkt_expand)[modelKeep]])
 
     CRIT = bic if criterion == 'bic' else icl
-    resOrdering = np.sort(CRIT)[::-1]
+    resOrdering = np.argsort(CRIT)[::-1]
 
-    qui = np.argmax(CRIT)
+    qui = np.nanargmax(CRIT)
     bestCritRes = chosenRes[qui]
     bestCritRes.criterion = criterion
     #is complexity all really necessary?
-    bestCritRes.complexity_all = {'_'.join(mkt_expand[modelKeep][i].values()): allComplex[i] for i in range(len(mkt_expand[modelKeep]))}
+    bestCritRes.complexity_all = [('_'.join(mkt_expand[modelKeep[i]].values()), allComplex[i]) for i in range(len(mkt_expand))]
+    if show:
+        if n > 1:
+            print("tfunHDDC: \n")
 
+        printModel = np.array([x.rjust(max([len(a) for a in model])) for x in model])
+        printK = np.array([str(x).rjust(max([len(str(a)) for a in K])) for x in K])
+        printTresh = np.array([str(x).rjust(max([len(str(a)) for a in threshold])) for x in threshold])
+        resout = np.c_[printModel[resOrdering], printK[resOrdering], printTresh[resOrdering], _T_addCommas((np.array(bestCritRes.complexity_all)[resOrdering])[:,1].astype(float)), _T_addCommas(np.array(CRIT)[resOrdering])]
+        resout = np.c_[np.arange(1,len(mkt_expand)+1), resout]
+
+        resout = np.where(resout != "-inf", resout, 'NA')
+        if np.any(np.nonzero(comment_all != '')[0]): 
+            resout = np.c_[resout, comment_all[resOrdering]]
+            resPrint = pd.DataFrame(data = resout[:,1:], columns=['Model', 'K', 'Threshold', 'Complexity', criterion.upper(), 'Comment'], index=resout[:, 0])
+        else:
+            resPrint = pd.DataFrame(data = resout[:,1:], columns=['Model', 'K', 'Threshold', 'Complexity', criterion.upper()], index=resout[:, 0])
+
+        print(resPrint)
+        print(f'\nSelected model {bestCritRes.model} with {bestCritRes.K} clusters')
+        print(f'\nSelection Criterion: {criterion}\n')
+
+    allCriteria = resPrint
+    bestCritRes.allCriteria=allCriteria
     #allcriteria goes here. Do we need it?
 
+    if keepAllRes:
+        allRes = chosenRes
+        bestCritRes.allRes=allRes
     #allresults goes here. Do we need it?
 
     #R assigns threshold here. Does it not already get assigned during main1?
@@ -526,7 +576,7 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
         #np.isnan(np.sum) is faster than np.isnan(np.min) for the general case
         else:
             if (not np.isnan(np.sum(known))):
-                warnings.warn("No  s in 'known' vector supplied. All values have known classification (parameter estimation only)")
+                warnings.warn("No Nans in 'known' vector supplied. All values have known classification (parameter estimation only)")
 
                 test_index = np.linspace(0, n-1, n)
                 kno = np.repeat(1, n)
@@ -650,7 +700,7 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
 
                 #TODO figure out better way to signal that mini-em didn't converge
                 if not isinstance(prms, TFunHDDC):
-                    return 1
+                    return "mini-em did not converge"
                 
                 t = prms_best.posterior
 
@@ -691,11 +741,11 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
                 compteur = 1
 
                 #sum columns
-                while(min(np.sum(t, axis=0)) < 1 and compteur + 1 < 5):
+                while(np.min(np.sum(t, axis=0)) < 1 and compteur + 1 < 5):
                     compteur += 1
                     t = rangen.multinomial(n=1, pvals=np.repeat(1/K, K), size=n)
 
-                if(min(np.sum(t, axis=0)) < 1):
+                if(np.min(np.sum(t, axis=0)) < 1):
                     raise ValueError("Random initialization failed (n too small)")
                 if clas > 0:
                     cluster = np.argmax(t, axis=1)
@@ -760,7 +810,7 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
         if K > 1:
             #does t have a NaN/None?
             if(np.isnan(np.sum(t))):
-                raise ValueError("t matrix contatins NaNs/Nones")
+                return "t matrix contatins NaNs/Nones"
             
             #try numpy any
             #does t have column sums less than min_individuals?
@@ -811,7 +861,7 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
 
     #b
     if np.isin(model, np.array(["AKJBQKDK", "AKBQKDK", "ABQKDK"])):
-        b = _Table(data = m['b'][0], rownames=["B:"], colnames=[''])
+        b = _Table(data = np.array([m['b'][0]]), rownames=["B:"], colnames=[''])
     else:
         b = _Table(data = m['b'], rownames=["Bk:"], colnames=np.arange(0, m['K']))
     
@@ -833,9 +883,7 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
 
     cl = np.argmax(t, axis=1)
 
-
     converged = test < eps
-
 
     params = {'wlist': wlist, 'model':model, 'K':K, 'd':d,
                 'a':a, 'b':b, 'mu':mu, 'prop':prop, 'nux':nux, 'ev': m['ev'],
@@ -849,13 +897,13 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
     params['BIC'] = bic_icl["bic"]
     params["ICL"] = bic_icl['icl']
 
-    tfunobj = TFunHDDC(params['wlist'], params['model'], params['K'], params['d'], 
-                        params['a'], params['b'], params['mu'], params['prop'], params['nux'],
-                        params['ev'], params['Q'], params['Q1'], params['fpca'],
-                        params['loglik'], params['loglik_all'], params['posterior'],
-                        params['class'], params['com_ev'], params['N'], params['complexity'],
-                        params['threshold'], params['d_select'], params['converged'], 
-                        params['index'], params['BIC'], params['ICL'])
+    tfunobj = TFunHDDC(Wlist=params['wlist'], model=params['model'], K=params['K'], d=params['d'], 
+                        a=params['a'], b=params['b'], mu=params['mu'], prop=params['prop'], nux=params['nux'],
+                        ev=params['ev'], Q=params['Q'], Q1=params['Q1'], fpca=params['fpca'],
+                        loglik=params['loglik'], loglik_all=params['loglik_all'], posterior=params['posterior'],
+                        cl=params['class'], com_ev=params['com_ev'], N=params['N'], complexity=params['complexity'],
+                        threshold=params['threshold'], d_select=params['d_select'], converged=params['converged'], 
+                        index=params['index'], bic=params['BIC'], icl=params['ICL'])
     return tfunobj
 
 def _T_funhddt_init(fdobj, Wlist, K, t, nux, model, threshold, method, noise_ctrl, com_dim, d_max, d_set):
@@ -1152,9 +1200,9 @@ def _T_funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
         mah_pen[:, i] = _T_imahalanobis(x, muki, Wki, Qk, aki)
         tw[:, i] = (nux[i]+p)/(nux[i] + mah_pen[:,i])
 
-        K_pen[:,i] = np.log(prop[i]) + scip.loggamma((nux[i] + p)/2) - (1/2) * \
+        K_pen[:,i] = np.log(prop[i]) + math.lgamma((nux[i] + p)/2) - (1/2) * \
         (s[i] + (p-d[i])*np.log(b[i]) - np.log(dety)) - ((p/2) * (np.log(np.pi)\
-        + np.log(nux[i])) + scip.loggamma(nux[i]/2) + ((nux[i] + p)/2) * \
+        + np.log(nux[i])) + math.lgamma(nux[i]/2) + ((nux[i] + p)/2) * \
         (np.log(1+mah_pen[:, i] / nux[i])))
 
     ft = np.exp(K_pen)
@@ -1316,24 +1364,23 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
 # *
 # */
 def _T_tyxf7(dfconstr, nux, n, t, tw, K, p, N):
-    newnux = np.zeros(3)
+    newnux = nux.copy()
     if dfconstr == "no":
         dfoldg = nux.copy()
 
         #scipy digamma is slow? https://gist.github.com/timvieira/656d9c74ac5f82f596921aa20ecb6cc8
         for i in range(0, K):
             constn = 1 + (1/n[i]) * np.sum(t[:, i] * (np.log(tw[:, i]) - tw[:, i])) + scip.digamma((dfoldg[i] + p)/2) - np.log((dfoldg[i] + p)/2)
-            temp = scip.digamma((dfoldg[i] + p)/2)
             
             f = lambda v : np.log(v/2) - scip.digamma(v/2) + constn
           
             #Verify this outputs the same as R: may need to set rtol to 0
             newnux[i] = scio.brentq(f, 0.0001, 1000, xtol=0.00001)
 
-            if newnux[i] > 200:
+            if newnux[i] > 200.:
                 newnux[i] = 200.
 
-            if newnux[i] < 2:
+            if newnux[i] < 2.:
                 newnux[i] = 2.
 
     else:
@@ -1346,10 +1393,10 @@ def _T_tyxf7(dfconstr, nux, n, t, tw, K, p, N):
         
         dfsamenewg = scio.brentq(f, a=0.0001, b=1000, xtol=0.01)
 
-        if dfsamenewg > 200:
+        if dfsamenewg > 200.:
             dfsamenewg = 200.
         
-        if dfsamenewg < 2:
+        if dfsamenewg < 2.:
             dfsamenewg = 2.
 
         newnux = np.repeat(dfsamenewg, K)
@@ -1357,22 +1404,21 @@ def _T_tyxf7(dfconstr, nux, n, t, tw, K, p, N):
     return newnux
 
 def _T_tyxf8(dfconstr, nux, n, t, tw, K, p, N):
-    newnux = np.zeros(3)
+    newnux = nux.copy()
 
     if(dfconstr == "no"):
         dfoldg = nux.copy()
         
         for i in range(0, K):
             constn = 1 + (1 / n[i]) * np.sum(t[:, i] * (np.log(tw[:, i]) - tw[:, i])) + scip.digamma((dfoldg[i] + p)/2) - np.log( (dfoldg[i] + p)/2)
-            temp = scip.digamma((dfoldg[i] + p)/2)
             
             constn = -constn
             newnux[i] = (-np.exp(constn) + 2 * (np.exp(constn)) * (np.exp(scip.digamma(dfoldg[i] / 2)) - ( (dfoldg[i]/2) - (1/2)))) / (1 - np.exp(constn))
 
-            if newnux[i] > 200:
+            if newnux[i] > 200.:
                 newnux[i] = 200.
 
-            if newnux[i] < 2:
+            if newnux[i] < 2.:
                 newnux[i] = 2.
 
     else:
@@ -1382,10 +1428,10 @@ def _T_tyxf8(dfconstr, nux, n, t, tw, K, p, N):
 
         dfsamenewg = (-np.exp(constn) + 2 * (np.exp(constn)) * (np.exp(scip.digamma(dfoldg / 2)) - ( (dfoldg/2) - (1/2)))) / (1 - np.exp(constn))
 
-        if dfsamenewg > 200:
+        if dfsamenewg > 200.:
             dfsamenewg = 200.
 
-        if dfsamenewg < 2:
+        if dfsamenewg < 2.:
             dfsamenewg = 2.
 
         newnux = np.repeat(dfsamenewg, K)
@@ -1823,3 +1869,359 @@ def _T_imahalanobis(x, muk, wk, Qk, aki):
     res = np.sum(proj ** 2, axis=1)
 
     return res
+
+def _T_estimateTime(stage, start_time=0, totmod=0):
+    curwidth = get_terminal_size()[0]
+    outputString = ""
+
+    if stage == 'init':
+        medstring = "????"
+        longstring = "????"
+        shortstring = "0"
+        modelCount = None
+        unitsRun = ""
+        unitsRemain=""
+
+    else:
+
+        modelCount = stage + 1
+        modsleft = totmod - modelCount
+        timerun = time.process_time() - start_time
+        timeremain = (timerun/modelCount)*modsleft
+        
+        if timeremain > 60 and timeremain <=3600:
+            unitsRemain = 'mins'
+            timeremain = timeremain/60
+        elif timeremain > 3600 and timeremain <= 86400:
+            unitsRemain = 'hours'
+            timeremain = timeremain/3600
+        elif timeremain > 86400 and timeremain <= 604800:
+            unitsRemain = 'days'
+            timeremain = timeremain/86400
+        elif timeremain > 604800:
+            unitsRemain = 'weeks'
+            timeremain = timeremain/604800
+        else:
+            unitsRemain = 'secs'
+
+        if timerun > 60 and timerun <=3600:
+            unitsRun = 'mins'
+            timerun = timerun/60
+        elif timerun > 3600 and timerun <= 86400:
+            unitsRun = 'hours '
+            timerun = timerun/3600
+        elif timerun > 86400 and timerun <= 604800:
+            unitsRun = 'days'
+            timerun = timerun/86400
+        elif timerun > 604800:
+            unitsRun = 'weeks '
+            timerun = timerun/604800
+        else:
+            unitsRun = 'secs'
+
+
+        shortstring = round((1-modsleft/totmod)*100)
+        medstring = round(timeremain, 1)
+        longstring = round(timerun,1)
+
+
+    if curwidth >=15:
+        shortstring = str(shortstring).rjust(5)
+        outputString = f'{shortstring}% complete'
+
+        if curwidth >=48:
+            medstring = str(medstring).rjust(10)
+            outputString = f'Approx. remaining:{medstring} {unitsRemain}  |  {outputString}'
+
+            if curwidth >=74:
+                longstring = str(longstring).rjust(10)
+                outputString = f'Time taken:{longstring} {unitsRun}  |  {outputString}'
+
+    print(outputString,'\r', flush=True, end='')
+
+def _T_hddc_control(params):
+
+    K = ('K',params['K'])
+    checkMissing(K)
+    checkType(K, (INT_TYPES))
+    checkRange(K, lower=1)
+
+    data = ('data', params['data'])
+    checkMissing(data)
+    checkType(data, (skfda.FDataBasis, dict))
+
+    if isinstance(data[1], skfda.FDataBasis):
+        checkType(('data', data[1].coefficients), (LIST_TYPES, (INT_TYPES, FLOAT_TYPES, LIST_TYPES)))
+        naCheck=np.sum(data[1].coefficients)
+        if naCheck in UNKNOWNS or pd.isna(naCheck):
+            raise ValueError(f"'data' parameter contains unsupported values. Please remove NaNs, NAs, infs, etc. if they are present")
+        if np.any(np.array(K[1])>2*data[1].coefficients.shape[1]):
+            raise ValueError("The number of observations in the data must be at least twice the number of clusters")
+        row_length = data[1].coefficients.shape[0]
+    else:
+        data_length = 0
+        row_length = 0
+        for i in range(len(data[1])):
+            checkType((f'data', data[1][f'{i}'].coefficients), (LIST_TYPES, (INT_TYPES, FLOAT_TYPES, LIST_TYPES)))
+            naCheck=np.sum(data[1][f'{i}'].coefficients)
+            if naCheck in UNKNOWNS or pd.isna(naCheck):
+                raise ValueError(f"'data' parameter contains unsupported values. Please remove NaNs, NAs, infs, etc. if they are present")
+            data_length += data[1][f'{i}'].coefficients.shape[1]
+            row_length += data[1][f'{i}'].coefficients.shape[0]
+
+        if np.any(np.array(K[1])>2*data_length):
+            raise ValueError("The number of observations in the data must be at least twice the number of clusters")
+
+    model = ("model", params['model'])
+    checkMissing(model)
+    checkType(model, (str, INT_TYPES))
+
+    known = ('known', params['known'])
+    if not (known[1] is None):
+        checkType(known, (LIST_TYPES, (INT_TYPES, FLOAT_TYPES)))
+
+        if(len(np.nonzero(np.array(known[1]).dtype == FLOAT_TYPES and known[1] != np.Nan)[0]) > 0):
+            raise ValueError("'Known' parameter should not contain values of type float except for NaN")
+    
+        if isinstance(K[1], LIST_TYPES):
+            k_temp = K[1][0]
+            if len(K[1]) > 1:
+                raise ValueError("K should not use multiple values when using 'known' parameter")
+        else:
+            k_temp = K[1]
+
+        if np.all(np.isnan(known[1])) or np.all(pd.isna(known[1])):
+            raise ValueError("'known' should have values from each class (should not all be unknown)")
+        
+        if len(known[1]) != row_length:
+            raise ValueError("length of 'known' parameter must match number of observations from data")
+        knownTemp = np.where(pd.isna(known[1]) or np.isnan(known[1]), 0, known[1])
+        if len(np.unique(knownTemp)) > k_temp:
+            raise ValueError("at most K different classes can be present in the 'known' parameter")
+        
+        if np.max(knownTemp) > K-1:
+            raise ValueError("group numbers in 'known' parameter must come from integers up to K (ie. for K=3, 0,1,2 are acceptable)")
+
+    dfstart = ('dfstart', params['dfstart'])
+    checkMissing(dfstart)
+    checkType(dfstart, (INT_TYPES, FLOAT_TYPES))
+    checkRange(dfstart, lower=2)
+
+    threshold = ('threshold', params['threshold'])
+    checkMissing(threshold)
+    checkType(threshold, (INT_TYPES, FLOAT_TYPES))
+    checkRange(threshold, upper=1, lower=0)
+    
+    dfupdate = ('dfupdate', params['dfupdate'])
+    checkMissing(dfupdate)
+    checkType(dfupdate, (str))
+    if dfupdate[1] not in ['approx', 'numeric']:
+        raise ValueError("'dfupdate' parameter should be either 'approx' or 'numeric'")
+    
+    dfconstr = ('dfconstr', params['dfconstr'])
+    checkMissing(dfconstr)
+    checkType(dfconstr, (str))
+    if dfconstr[1] not in ['no', 'yes']:
+        raise ValueError("'dfconstr' parameter should be either 'no' or 'yes'")
+    
+    itermax = ('itermax', params['itermax'])
+    checkMissing(itermax)
+    checkType(itermax, (INT_TYPES))
+    checkRange(itermax, lower=2)
+
+    eps = ('eps', params['eps'])
+    checkMissing(eps)
+    checkType(eps, (INT_TYPES, FLOAT_TYPES))
+    checkRange(eps, lower=0)
+
+    init = ('init', params['init'])
+    checkMissing(init)
+    checkType(init, (str))
+
+    match init[1]:
+
+        case "vector":
+            vec = ('init_vector', params['init_vector'])
+
+            checkMissing(vec)
+                
+            checkType(vec, (LIST_TYPES, (INT_TYPES)))
+
+            if isinstance(K[1], LIST_TYPES):
+                k_temp = K[1][0]
+                if len(K[1]) > 1:
+                    raise ValueError("K should not use multiple values when using init = 'vector'")
+
+            if len(np.unique(vec[1])) < k_temp:
+                raise ValueError(f"'init_vector' lacks representation from all K classes (K={K})")
+
+            if len(vec[1]) != row_length:
+                raise ValueError("Size 'init_vector' is different from size of data")
+
+        case "mini-em":
+            mini = ('mini_nb', params['mini_nb'])
+
+            checkMissing(mini)
+            checkType(mini, (LIST_TYPES, (INT_TYPES)))
+            checkRange(mini, lower=1)
+
+            if len(mini[1]) != 2:
+                raise ValueError(f"Parameter 'mini_nb' should be of length 2, not length {len(mini[1])}")
+            
+        case "kmeans":
+            kmc = ('kmeans_control', params['kmeans_control'])
+
+            if kmc[1] is None:
+                pass
+            else:
+                checkType(kmc, [dict])
+                checkKMC(kmc[1])
+
+    criterion = ('criterion', params['criterion'])
+    checkMissing(criterion)
+    checkType(criterion, (str))
+
+    if criterion[1] not in ['bic', 'icl']:
+        raise ValueError("'Criterion' parameter should be either 'bic' or 'icl'")
+    
+    d_select = ('d_select', params['d_select'])
+    checkMissing(d_select)
+    checkType(d_select, (str))
+
+    if d_select[1] == 'grid':
+        d_range = ('d_range', params['d_range'])
+        checkMissing(d_range)
+        checkType(d_range, (INT_TYPES))
+        checkRange(d_range, lower=1)
+
+        if np.max(d_range) > data_length:
+            raise ValueError("Intrinsic dimension 'd' can't be larger than number of input parameters. Please set lower max")
+
+    if d_select[1] not in ['cattell', 'bic']:
+        raise ValueError("'d_select' parameter should be 'cattell' 'bic', or 'grid'")
+    
+    show = ('show', params['show'])
+    checkMissing(show)
+    checkType(show, [bool])
+
+    min_indiv = ('min_individuals', params['min_individuals'])
+    checkMissing(min_indiv)
+    checkType(min_indiv, (INT_TYPES))
+    checkRange(min_indiv, lower=2)
+
+    cores = ('mc_cores', params['mc_cores'])
+    checkMissing(cores)
+    checkType(cores, (INT_TYPES))
+    checkRange(cores, lower=1)
+
+    rep = ('nb_rep', params['nb_rep'])
+    checkMissing(rep)
+    checkType(rep, (INT_TYPES))
+    checkRange(rep, lower=1)
+
+    keep = ('keepAllRes', params['keepAllRes'])
+    checkMissing(keep)
+    checkType(keep, [bool])
+    
+    d_max = ('d_max', params['d_max'])
+    checkMissing(d_max)
+    checkType(d_max, (INT_TYPES))
+    checkRange(d_max, lower=1)
+
+    verbose = ('verbose', params['verbose'])
+    checkMissing(verbose)
+    checkType(verbose, [bool])
+
+
+def checkType(param, check):
+    if not isinstance(check, type):
+        if check[0] is LIST_TYPES:
+            result = isinstance(param[1], LIST_TYPES)
+            if not np.all(result):
+                raise ValueError(f"Parameter {param[0]} is of wrong type (should be of type {LIST_TYPES[0]} for example)")
+            
+            result = np.array([isinstance(val, check[1]) for val in param[1]])
+
+            if param[0] == "data":
+                for i in param[1]:
+                    checkType((param[0], i), (INT_TYPES, FLOAT_TYPES))
+
+            if not np.all(result):
+                
+                result = np.nonzero(result == False)[0]
+                raise ValueError(f"Parameter {param[0]} contains data of an incorrect type (cannot contain elements of type {type(param[1][result][0])} for example)")
+
+    else:
+
+        if isinstance(param[1], LIST_TYPES):
+            result = np.array([isinstance(val, check) for val in param[1]])
+
+        else:
+            result = isinstance(param[1], check)
+
+        if not np.all(result):
+
+            result = np.nonzero(result == False)[0]
+            if isinstance(param[1], LIST_TYPES):
+                result = param[1][result][0]
+
+            else:
+                result = param[1]
+
+            raise ValueError(f"Parameter {param[0]} is of an incorrect type (cannot be of type {type(result)}) for example")
+            
+
+def checkMissing(param):
+
+    if param is None:
+        raise ValueError(f"Missing required '{param[0]}' parameter")
+    
+def checkRange(param, upper=None, lower=None):
+
+    result = True
+    if isinstance(param[1], LIST_TYPES):
+        if not (lower is None):
+
+            result = np.min(param[1]) < lower
+
+        elif not (upper is None):
+            
+            result = result and (np.max(param[1]) > upper)
+
+    else:
+
+        if not (lower is None):
+            result = param[1] < lower
+        
+        elif not (upper is None):
+            result = result and (param[1] > upper)
+
+    if result:
+        msg = ""
+        if lower != False:
+            msg = f' greater than or equal to {lower}'
+
+        elif upper != False:
+            if len(msg > 0):
+                msg = f'{msg} and'
+            msg = f'{msg} less than or equal to {upper}'
+
+        raise ValueError(f"Parameter '{param[0]}' must be {msg}")
+
+def checkKMC(kmc):
+    settingNames = ['n_init', 'max_iter', 'algorithm']
+
+    result = [name in kmc for name in settingNames]
+    
+    if not np.all(result):
+        result = np.nonzero(result == False)[0][0]
+        raise ValueError(f"Missing setting {result} in parameter 'kmeans_control'")
+    
+    checkType(('n_init',kmc['n_init']), ((INT_TYPES)))
+    checkRange(('n_init',kmc['n_init']), lower=1)
+    checkType(('max_iter', kmc['max_iter']), (INT_TYPES))
+    checkRange(('max_iter',kmc['max_iter']), lower=1)
+    checkType(kmc['algorithm'], (str))
+
+def deafaultKMC(kmc):
+    return {}
