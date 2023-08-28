@@ -331,7 +331,6 @@ def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50.
 
     mkt_list = {}
     if d_select == 'grid':
-        #Why can't we use multiple values for K here?
         if len(K) > 1:
             raise ValueError("When using d_select='grid, K must be only one value (ie. not a list)")
         
@@ -384,7 +383,7 @@ def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50.
                                     itermax=itermax, model=model, threshold=threshold,
                                     method=d_select, eps=eps, init=init, init_vector=init_vector,
                                     mini_nb=mini_nb, min_individuals=min_individuals, noise_ctrl=noise_ctrl,
-                                    com_dim=com_dim, kmeans_control=kmeans_control, d_max=d_max, d_set=d_set, known=None)
+                                    com_dim=com_dim, kmeans_control=kmeans_control, d_max=d_max, d_set=d_set, known=known)
             
             if verbose:
                 _T_estimateTime(stage=modelNo, start_time=start_time, totmod=totmod)
@@ -434,7 +433,7 @@ def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50.
                 d_sets.append(d_temp)
             
             with p:
-                params = [(fdobj, Wlist, Ks[i], dfstart, dfupdate, dfconstr, models[i], itermax, thresholds[i], d_select, eps, init, init_vector, mini_nb, min_individuals, noise_ctrl, com_dim, kmeans_control, d_max, d_sets[i], None) for i in range(len(models))]
+                params = [(fdobj, Wlist, Ks[i], dfstart, dfupdate, dfconstr, models[i], itermax, thresholds[i], d_select, eps, init, init_vector, mini_nb, min_individuals, noise_ctrl, com_dim, kmeans_control, d_max, d_sets[i], known) for i in range(len(models))]
                 res = p.starmap_async(_T_funhddc_main1, params, callback=callbackFunc).get()
 
         #TODO add descriptive text here explaining that this is an unknown error
@@ -674,7 +673,7 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
                     
                     cluster = knew
 
-                for i in range(0, K):
+                for i in range(K):
                     t[np.nonzero(cluster == i)[0], i] = 1.
 
             #skip trimmed kmeans
@@ -973,7 +972,8 @@ def _T_funhddt_init(fdobj, Wlist, K, t, nux, model, threshold, method, noise_ctr
 
         for i in range(K):
             a += (np.sum(ev[i, 0:d[i]])*prop[i])
-            ai = np.full((K, max(d)), a/eps)
+        
+        ai = np.full((K, np.max(d)), a/eps)
 
 
     
@@ -1018,7 +1018,7 @@ def _T_initmypca_fd1(fdobj, Wlist, Ti):
         mean_fd.coefficients = coefmean
         cov = (Wlist['W_m']@mat_cov)@(Wlist['W_m'].T)
         if not check_symmetric(cov, 1.e-12):
-            ind = np.nonzero(cov - cov.T > 1.e-12)
+            ind = np.nonzero((cov - cov.T) > 1.e-12)
             cov[ind] = cov.T[ind]
             
 
@@ -2051,7 +2051,8 @@ def _T_hddc_control(params):
                 k_temp = K[1][0]
                 if len(K[1]) > 1:
                     raise ValueError("K should not use multiple values when using init = 'vector'")
-
+            else:
+                k_temp = K[1]
             if len(np.unique(vec[1])) < k_temp:
                 raise ValueError(f"'init_vector' lacks representation from all K classes (K={K})")
 
