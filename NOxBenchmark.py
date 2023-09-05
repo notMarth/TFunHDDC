@@ -7,8 +7,10 @@ def fitNOxBenchmark(nbasis = 15):
 
     nox = skfda.datasets.fetch_nox()
     nox_data = nox['data']
-    basis = skfda.representation.basis.BSplineBasis(domain_range = np.linspace(0,23, num=2),
-                                            n_basis=nbasis)
+   # basis = skfda.representation.basis.BSplineBasis(domain_range = np.linspace(0,23, num=2),
+                                           # n_basis=nbasis)
+    basis = skfda.representation.basis.FourierBasis(domain_range = np.linspace(0,23, num=2),
+                                             n_basis=nbasis)                                           
     nox_fd = nox_data.to_basis(basis)
     labels = nox['target']
     print(nox_data)
