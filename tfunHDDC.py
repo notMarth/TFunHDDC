@@ -13,6 +13,7 @@ import scipy.special as scip
 import scipy.optimize as scio
 import math
 from shutil import get_terminal_size
+import numba as nb
 #------------------------------------------------------------------------------#
 
 #GLOBALS
@@ -367,8 +368,9 @@ def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50.
 
     #Pass in dict from mkt_expand
     def hddcWrapper(mkt, verbose, start_time = 0, totmod=1):
-        modelNo = mkt[1]
-        mkt = mkt[0]
+        if verbose:
+            modelNo = mkt[1]
+            mkt = mkt[0]
         model = mkt['model']
         K = int(mkt['K'])
         threshold = float(mkt['threshold'])
@@ -1306,6 +1308,7 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
 
     #Intrinsic dimensions selection
     
+    #TODO try refactoring this for numba
     d = _T_hdclassif_dim_choice(ev, n, method, threshold, False, noise_ctrl, d_set)
     #correct for Python indices
     d+=1
@@ -1466,9 +1469,9 @@ def _T_mypcat_fd1(fdobj, Wlist, Ti, corI):
         bj = scil.solve(Wlist['W_m'], np.eye(Wlist['W_m'].shape[0]))@np.real(vecteurs_propres)
         fonctionspropres.coefficients = bj
 
-        scores = skfda.misc.inner_product_matrix(temp.basis, fonctionspropres.basis)
+        #scores = skfda.misc.inner_product_matrix(temp.basis, fonctionspropres.basis)
         varprop = valeurs_propres / np.sum(valeurs_propres)
-        pcafd = {'valeurs_propres': np.real(valeurs_propres), 'harmonic': fonctionspropres, 'scores': scores, 'covariance': cov, 'U':bj, 'meanfd': mean_fd}
+        pcafd = {'valeurs_propres': np.real(valeurs_propres), 'harmonic': fonctionspropres, 'covariance': cov, 'U':bj, 'meanfd': mean_fd}
 
     #Multivariate here
     else:
@@ -1620,7 +1623,6 @@ def _T_hdclassif_dim_choice(ev, n, method, threshold, graph, noise_ctrl, d_set):
         d=np.array([d])
     return d
 
-
 def _T_hdclassift_bic(par, p, dfconstr):
     #mux and mu not used, should we get rid of them?
     model = par['model']
@@ -1771,16 +1773,17 @@ def _T_hdc_getTheModel(model, all2models = False):
     #shortcut for all the models
     if len(model) == 1 and new_model[0] == "ALL":
         if all2models:
-            model = np.arange(0, 6)
-            new_model = np.arange(0,6)
+            new_model = np.zeros(6, dtype='<U9')
+            model = np.arange(0,6)
         else:
             return "ALL"
         
     #are the models numbers?
     if type(model[0]) == np.int_:
-        qui = np.nonzero(np.isin(model, np.arange(0, 14)))[0]
+        qui = np.nonzero(np.isin(model, np.arange(0, 6)))[0]
         if len(qui) > 0:
             new_model[qui] = ModelNames[model[qui]]
+            new_model = new_model[qui]
 
     #find model names that are incorrect    
     qui = np.nonzero( np.invert(np.isin(new_model, ModelNames)))[0]
@@ -1849,6 +1852,7 @@ def _T_diago(v):
 
     return res
 
+@nb.njit
 def _T_imahalanobis(x, muk, wk, Qk, aki):
     
     #C code not working for now, try compiling dll on current machine?
@@ -1860,11 +1864,11 @@ def _T_imahalanobis(x, muk, wk, Qk, aki):
     
     X = x - muk
 
-    Qi = np.matmul(wk, Qk)
+    Qi = wk@Qk
 
     #xQu = np.matmul(X, Qi)
 
-    proj = np.matmul(np.matmul(X, Qi), aki)
+    proj = (X@Qi)@aki
 
     res = np.sum(proj ** 2, axis=1)
 
