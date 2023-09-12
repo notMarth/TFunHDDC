@@ -2,16 +2,16 @@
 import skfda
 from sklearn import cluster as clust
 from sklearn.model_selection import ParameterGrid
-from sklearn.utils import Bunch
 import numpy as np
 import warnings
 import pandas as pd
 import multiprocessing as multi
 import time
 from scipy import linalg as scil
-import scipy.special as scip
-import scipy.optimize as scio
-import math
+from scipy.special import digamma
+from scipy.special import loggamma
+from scipy.special import binom
+from scipy.optimize import brentq
 from shutil import get_terminal_size
 import numba as nb
 #------------------------------------------------------------------------------#
@@ -86,7 +86,7 @@ class TFunHDDC:
 
     def __init__(self, Wlist, model, K, d, a, b, mu, prop, nux, ev, Q, Q1,
                  fpca, loglik, loglik_all, posterior, cl, com_ev, N,
-                 complexity, threshold, d_select, converged, index, bic, icl):
+                 complexity, threshold, d_select, converged, index, bic, icl, basis):
         self.Wlist = Wlist
         self.model = model
         self.K = K
@@ -117,6 +117,7 @@ class TFunHDDC:
         self.complexity_all = None
         self.allCriteria = None
         self.allRes = None
+        self.basis = basis
 
     def predict(self, data):
         #TODO check if data Null
@@ -125,11 +126,11 @@ class TFunHDDC:
         #univariate
         x = data.coefficients.copy()
 
-        #TODO fix this, should be number of basis functions
-        Np = 15
+        #TODO try generating a new instance of the data. Does it still register that this is the same base?
+        Np = data.basis
         p = x.shape[1]
         N = x.shape[0]
-        if Np != p:
+        if Np != self.basis:
             raise ValueError("New observations should be represented using the same base as for the training set")
         a = self.a.data.copy()
         b = self.b.data.copy()
@@ -159,7 +160,7 @@ class TFunHDDC:
                     mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
 
                     #scipy logamma vs math lgamma?
-                    K_pen[:, i] = np.log(prop[i]) + math.lgamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + math.lgamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
+                    K_pen[:, i] = np.log(prop[i]) + loggamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + loggamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
 
             case 'AKJBQKDK':
                 for i in range(self.K):
@@ -174,7 +175,7 @@ class TFunHDDC:
 
                     #Copied from previous case with b[i] changed to b[1]
                     #scipy logamma vs math lgamma?
-                    K_pen[:, i] = np.log(prop[i]) + math.lgamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + math.lgamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
+                    K_pen[:, i] = np.log(prop[i]) + loggamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + loggamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
 
             case 'AKBKQKDK':
                 for i in range(self.K):
@@ -188,7 +189,7 @@ class TFunHDDC:
                     mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
 
                     #copied from AKJBKQKDK
-                    K_pen[:, i] = np.log(prop[i]) + math.lgamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + math.lgamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
+                    K_pen[:, i] = np.log(prop[i]) + loggamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + loggamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
 
 
             case 'ABKQKDK':
@@ -203,7 +204,7 @@ class TFunHDDC:
                     mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
 
                     #copied from AKJBKQKDK
-                    K_pen[:, i] = np.log(prop[i]) + math.lgamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + math.lgamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
+                    K_pen[:, i] = np.log(prop[i]) + loggamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + loggamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
 
             case 'AKBQKDK':
                 for i in range(self.K):
@@ -217,7 +218,7 @@ class TFunHDDC:
                     mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
 
                     #copied from AKJBKQKDK
-                    K_pen[:, i] = np.log(prop[i]) + math.lgamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + math.lgamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
+                    K_pen[:, i] = np.log(prop[i]) + loggamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + loggamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
 
             case 'ABQKDK':
                 for i in range(self.K):
@@ -231,7 +232,7 @@ class TFunHDDC:
                     mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
 
                     #copied from AKJBKQKDK
-                    K_pen[:, i] = np.log(prop[i]) + math.lgamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + math.lgamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
+                    K_pen[:, i] = np.log(prop[i]) + loggamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + loggamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
 
         kcon = -np.apply_along_axis(np.max, 1, K_pen)
         K_pen += np.atleast_2d(kcon).T
@@ -577,9 +578,9 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
         #np.isnan(np.sum) is faster than np.isnan(np.min) for the general case
         else:
             if (not np.isnan(np.sum(known))):
-                warnings.warn("No Nans in 'known' vector supplied. All values have known classification (parameter estimation only)")
+                #warnings.warn("No Nans in 'known' vector supplied. All values have known classification (parameter estimation only)")
 
-                test_index = np.linspace(0, n-1, n)
+                test_index = np.linspace(0, n-1, n).astype(int)
                 kno = np.repeat(1, n)
                 unkno = (kno-1)*(-1)
                 K = len(np.unique(known))
@@ -785,7 +786,7 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
         tw = np.ones(shape = (n, 1))
 
     if clas > 0:
-        t = unkno.T*t
+        t = np.atleast_2d(unkno).T*t
         
         for i in range(0, n):
             if kno[i] == 1:
@@ -904,7 +905,7 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
                         loglik=params['loglik'], loglik_all=params['loglik_all'], posterior=params['posterior'],
                         cl=params['class'], com_ev=params['com_ev'], N=params['N'], complexity=params['complexity'],
                         threshold=params['threshold'], d_select=params['d_select'], converged=params['converged'], 
-                        index=params['index'], bic=params['BIC'], icl=params['ICL'])
+                        index=params['index'], bic=params['BIC'], icl=params['ICL'], basis=fdobj.basis)
     return tfunobj
 
 def _T_funhddt_init(fdobj, Wlist, K, t, nux, model, threshold, method, noise_ctrl, com_dim, d_max, d_set):
@@ -1034,9 +1035,9 @@ def _T_initmypca_fd1(fdobj, Wlist, Ti):
         bj = scil.solve(Wlist['W_m'], np.eye(Wlist['W_m'].shape[0]))@np.real(vecteurs_propres)
         fonctionspropres.coefficients = bj
 
-        scores = skfda.misc.inner_product_matrix(temp.basis, fonctionspropres.basis)
+        #scores = skfda.misc.inner_product_matrix(temp.basis, fonctionspropres.basis)
         varprop = valeurs_propres / np.sum(valeurs_propres)
-        ipcafd = {'valeurs_propres': np.real(valeurs_propres), 'harmonic': fonctionspropres, 'scores': scores, 'covariance': cov, 'U':bj, 'meanfd': mean_fd, 'mux': coefmean}
+        ipcafd = {'valeurs_propres': np.real(valeurs_propres), 'harmonic': fonctionspropres, 'covariance': cov, 'U':bj, 'meanfd': mean_fd, 'mux': coefmean}
 
     #Multivariate
     else:
@@ -1083,8 +1084,8 @@ def _T_initmypca_fd1(fdobj, Wlist, Ti):
 
         varprop = valeurs_propres / np.sum(valeurs_propres)
 
-        ipcafd = {'valeurs_propres': np.real(valeurs_propres), 'harmonic': fonctionspropres,
-                  'scores': scores, 'covariance': cov, 'U': bj, 'varprop': varprop,
+        ipcafd = {'valeurs_propres': np.real(valeurs_propres), 'harmonic': fonctionspropres, 
+                  'covariance': cov, 'U': bj, 'varprop': varprop,
                   'meanfd': mean_fd, 'mux': coefmean}
 
     return ipcafd
@@ -1202,9 +1203,9 @@ def _T_funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
         mah_pen[:, i] = _T_imahalanobis(x, muki, Wki, Qk, aki)
         tw[:, i] = (nux[i]+p)/(nux[i] + mah_pen[:,i])
 
-        K_pen[:,i] = np.log(prop[i]) + math.lgamma((nux[i] + p)/2) - (1/2) * \
+        K_pen[:,i] = np.log(prop[i]) + loggamma((nux[i] + p)/2) - (1/2) * \
         (s[i] + (p-d[i])*np.log(b[i]) - np.log(dety)) - ((p/2) * (np.log(np.pi)\
-        + np.log(nux[i])) + math.lgamma(nux[i]/2) + ((nux[i] + p)/2) * \
+        + np.log(nux[i])) + loggamma(nux[i]/2) + ((nux[i] + p)/2) * \
         (np.log(1+mah_pen[:, i] / nux[i])))
 
     ft = np.exp(K_pen)
@@ -1300,11 +1301,11 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
     fpcaobj = {}
 
     for i in range(0, K):
-        donnees = _T_mypcat_fd1(fdobj, Wlist, t[:,i], corX[:,i])
-        traceVect[i] = np.sum(np.diag(donnees['valeurs_propres']))
-        ev[i] = donnees['valeurs_propres']
-        Q[f'{i}'] = donnees['U']
-        fpcaobj[f'{i}'] = donnees
+        valeurs_propres, cov, U = _T_mypcat_fd1(fdobj.coefficients, Wlist['W_m'], np.atleast_2d(t[:,i]), np.atleast_2d(corX[:,i]))
+        traceVect[i] = np.sum(np.diag(valeurs_propres))
+        ev[i] = valeurs_propres
+        Q[f'{i}'] = U
+        fpcaobj[f'{i}'] = {'valeurs_propres': valeurs_propres, 'cov': cov, 'U':U}
 
     #Intrinsic dimensions selection
     
@@ -1373,12 +1374,12 @@ def _T_tyxf7(dfconstr, nux, n, t, tw, K, p, N):
 
         #scipy digamma is slow? https://gist.github.com/timvieira/656d9c74ac5f82f596921aa20ecb6cc8
         for i in range(0, K):
-            constn = 1 + (1/n[i]) * np.sum(t[:, i] * (np.log(tw[:, i]) - tw[:, i])) + scip.digamma((dfoldg[i] + p)/2) - np.log((dfoldg[i] + p)/2)
+            constn = 1 + (1/n[i]) * np.sum(t[:, i] * (np.log(tw[:, i]) - tw[:, i])) + digamma((dfoldg[i] + p)/2) - np.log((dfoldg[i] + p)/2)
             
-            f = lambda v : np.log(v/2) - scip.digamma(v/2) + constn
+            f = lambda v : np.log(v/2) - digamma(v/2) + constn
           
             #Verify this outputs the same as R: may need to set rtol to 0
-            newnux[i] = scio.brentq(f, 0.0001, 1000, xtol=0.00001)
+            newnux[i] = brentq(f, 0.0001, 1000, xtol=0.00001)
 
             if newnux[i] > 200.:
                 newnux[i] = 200.
@@ -1389,12 +1390,12 @@ def _T_tyxf7(dfconstr, nux, n, t, tw, K, p, N):
     else:
         dfoldg = nux[0]
 
-        constn = 1 + (1/N) * np.sum(t *(np.log(tw) - tw)) + scip.digamma( (dfoldg + p) / 2) - np.log( (dfoldg + p) / 2)
+        constn = 1 + (1/N) * np.sum(t *(np.log(tw) - tw)) + digamma( (dfoldg + p) / 2) - np.log( (dfoldg + p) / 2)
 
-        f = lambda v : np.log(v/2) - scip.digamma(v/2) + constn
+        f = lambda v : np.log(v/2) - digamma(v/2) + constn
             #Verify this outputs the same as R: may need to set rtol to 0
         
-        dfsamenewg = scio.brentq(f, a=0.0001, b=1000, xtol=0.01)
+        dfsamenewg = brentq(f, a=0.0001, b=1000, xtol=0.01)
 
         if dfsamenewg > 200.:
             dfsamenewg = 200.
@@ -1413,10 +1414,10 @@ def _T_tyxf8(dfconstr, nux, n, t, tw, K, p, N):
         dfoldg = nux.copy()
         
         for i in range(0, K):
-            constn = 1 + (1 / n[i]) * np.sum(t[:, i] * (np.log(tw[:, i]) - tw[:, i])) + scip.digamma((dfoldg[i] + p)/2) - np.log( (dfoldg[i] + p)/2)
+            constn = 1 + (1 / n[i]) * np.sum(t[:, i] * (np.log(tw[:, i]) - tw[:, i])) + digamma((dfoldg[i] + p)/2) - np.log( (dfoldg[i] + p)/2)
             
             constn = -constn
-            newnux[i] = (-np.exp(constn) + 2 * (np.exp(constn)) * (np.exp(scip.digamma(dfoldg[i] / 2)) - ( (dfoldg[i]/2) - (1/2)))) / (1 - np.exp(constn))
+            newnux[i] = (-np.exp(constn) + 2 * (np.exp(constn)) * (np.exp(digamma(dfoldg[i] / 2)) - ( (dfoldg[i]/2) - (1/2)))) / (1 - np.exp(constn))
 
             if newnux[i] > 200.:
                 newnux[i] = 200.
@@ -1426,10 +1427,10 @@ def _T_tyxf8(dfconstr, nux, n, t, tw, K, p, N):
 
     else:
         dfoldg = nux[0]
-        constn = 1 + (1 / N) * np.sum(t * (np.log(tw) - tw)) + scip.digamma((dfoldg + p)/2) - np.log( (dfoldg + p)/2)
+        constn = 1 + (1 / N) * np.sum(t * (np.log(tw) - tw)) + digamma((dfoldg + p)/2) - np.log( (dfoldg + p)/2)
         constn = -constn
 
-        dfsamenewg = (-np.exp(constn) + 2 * (np.exp(constn)) * (np.exp(scip.digamma(dfoldg / 2)) - ( (dfoldg/2) - (1/2)))) / (1 - np.exp(constn))
+        dfsamenewg = (-np.exp(constn) + 2 * (np.exp(constn)) * (np.exp(digamma(dfoldg / 2)) - ( (dfoldg/2) - (1/2)))) / (1 - np.exp(constn))
 
         if dfsamenewg > 200.:
             dfsamenewg = 200.
@@ -1441,7 +1442,37 @@ def _T_tyxf8(dfconstr, nux, n, t, tw, K, p, N):
 
     return newnux
 
-def _T_mypcat_fd1(fdobj, Wlist, Ti, corI):
+@nb.njit
+def _T_mypcat_fd1(data, W_m, Ti, corI):
+    
+    coefmean = np.zeros(data.shape)
+    for i in range(data.shape[1]):
+
+        coefmean[:, i] = np.sum(((np.ascontiguousarray(corI.T)@np.atleast_2d(np.repeat(1., data.shape[1]))).T * data.T)[:, i])/np.sum(corI)
+
+    temp = np.zeros(data.shape)
+    for i in range(data.shape[1]):
+        temp[:, i] = data[:, i] - coefmean[:, i]
+
+    n = data.shape[1]
+    p=1
+    v = np.sqrt(corI)
+    M = np.repeat(1., n).reshape((n, 1))@(v)
+    rep = (M * data.T).T
+    mat_cov = (rep.T@rep) / np.sum(Ti)
+    cov = (W_m@ mat_cov)@(W_m.T)
+    if not np.all(np.abs(cov-cov.T) < 1.e-12):
+        ind = np.nonzero(cov - cov.T > 1.e-12)
+        for i in ind:
+            cov[i] = cov.T[i]
+
+    valeurs_propres, vecteurs_propres = np.linalg.eig(cov)
+    bj = np.linalg.solve(W_m, np.eye(W_m.shape[0]))@np.real(vecteurs_propres)
+    
+    return np.real(valeurs_propres), cov, bj
+
+
+    '''
     #Univariate here
     if type(fdobj) == skfda.FDataBasis:
         temp = fdobj.copy()
@@ -1513,7 +1544,7 @@ def _T_mypcat_fd1(fdobj, Wlist, Ti, corI):
 
         pcafd = {'valeurs_propres': np.real(valeurs_propres), 'harmonic': fonctionspropres, 'scores': scores,
                  'covariance': cov, 'U':bj, 'varprop': varprop, 'meanfd': mean_fd}
-
+    '''
     return pcafd
 
 def _T_hddc_ari(x, y):
@@ -1525,10 +1556,10 @@ def _T_hddc_ari(x, y):
 
     tab = pd.crosstab(x, y).values
     if np.all(tab.shape == (1,1)): return 1
-    a = np.sum(scip.binom(tab, 2))
-    b = np.sum(scip.binom(np.sum(tab, axis=1), 2)) - a
-    c = np.sum(scip.binom(np.sum(tab, axis=0), 2)) - a
-    d = scip.binom(np.sum(tab), 2) - a - b - c
+    a = np.sum(binom(tab, 2))
+    b = np.sum(binom(np.sum(tab, axis=1), 2)) - a
+    c = np.sum(binom(np.sum(tab, axis=0), 2)) - a
+    d = binom(np.sum(tab), 2) - a - b - c
     ari = (a - (a + b) * (a + c)/(a+b+c+d))/((a+b+a+c)/2 - (a+b) * (a + c)/(a+b+c+d))
     return ari
 
@@ -1984,8 +2015,8 @@ def _T_hddc_control(params):
     if not (known[1] is None):
         checkType(known, (LIST_TYPES, (INT_TYPES, FLOAT_TYPES)))
 
-        if(len(np.nonzero(np.array(known[1]).dtype == FLOAT_TYPES and known[1] != np.Nan)[0]) > 0):
-            raise ValueError("'Known' parameter should not contain values of type float except for NaN")
+        # if(len(np.nonzero(np.array(known[1]).dtype == FLOAT_TYPES and known[1] != np.NaN)[0]) > 0):
+        #     raise ValueError("'Known' parameter should not contain values of type float except for NaN")
     
         if isinstance(K[1], LIST_TYPES):
             k_temp = K[1][0]
@@ -1999,11 +2030,11 @@ def _T_hddc_control(params):
         
         if len(known[1]) != row_length:
             raise ValueError("length of 'known' parameter must match number of observations from data")
-        knownTemp = np.where(pd.isna(known[1]) or np.isnan(known[1]), 0, known[1])
+        knownTemp = np.where(np.any(pd.isna(known[1])) or np.any(np.isnan(known[1])), 0, known[1])
         if len(np.unique(knownTemp)) > k_temp:
             raise ValueError("at most K different classes can be present in the 'known' parameter")
         
-        if np.max(knownTemp) > K-1:
+        if np.max(knownTemp) > k_temp-1:
             raise ValueError("group numbers in 'known' parameter must come from integers up to K (ie. for K=3, 0,1,2 are acceptable)")
 
     dfstart = ('dfstart', params['dfstart'])
