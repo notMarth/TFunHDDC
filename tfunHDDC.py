@@ -132,12 +132,12 @@ class TFunHDDC:
         N = x.shape[0]
         if Np != self.basis:
             raise ValueError("New observations should be represented using the same base as for the training set")
-        a = self.a.data.copy()
-        b = self.b.data.copy()
-        d = self.d.data.copy()
-        nux = self.nux.data.copy()
-        mu = self.mu.data.copy()
-        prop = self.prop.data.copy()
+        a = self.a
+        b = self.b
+        d = self.d
+        nux = self.nux
+        mu = self.mu
+        prop = self.prop
         b[b<1.e-6] = 1.e-6
         wki = self.Wlist['W_m']
 
@@ -250,9 +250,6 @@ class TFunHDDC:
     def __repr__(self):
         return None
     '''
-
-def callbackFunc(res):
-    print("Complete!")
 
 def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50., 
              dfupdate='approx', dfconstr='no', threshold=0.1, itermax=200, 
@@ -437,7 +434,7 @@ def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50.
             
             with p:
                 params = [(fdobj, Wlist, Ks[i], dfstart, dfupdate, dfconstr, models[i], itermax, thresholds[i], d_select, eps, init, init_vector, mini_nb, min_individuals, noise_ctrl, com_dim, kmeans_control, d_max, d_sets[i], known) for i in range(len(models))]
-                res = p.starmap_async(_T_funhddc_main1, params, callback=callbackFunc).get()
+                res = p.starmap_async(_T_funhddc_main1, params).get()
 
         #TODO add descriptive text here explaining that this is an unknown error
         except Exception as e:
@@ -530,12 +527,10 @@ def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50.
     return bestCritRes
 
 #TODO add default values
-#*args argument replaces ... in R code
-#fdobj should either be a FDataBasis object or a dictionary of FDataBasis objects
 def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
                      itermax, threshold, method, eps, init, init_vector,
                      mini_nb, min_individuals, noise_ctrl, com_dim,
-                     kmeans_control, d_max, d_set, known, *args):
+                     kmeans_control, d_max, d_set, known):
     modelNames = ["AKJBKQKDK", "AKBKQKDK", "ABKQKDK", "AKJBQKDK", "AKBQKDK", 
                   "ABQKDK", "AKJBKQKD", "AKBKQKD", "ABKQKD", "AKJBQKD",
                   "AKBQKD", "ABQKD"]
@@ -552,10 +547,9 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
                 data = np.c_[data, fdobj[f'{i}'].coefficients]
         #univariate in dict
         else:
-            data = fdobj['0'].coeficients
+            data = fdobj['0'].coefficients
 
     n, p = data.shape
-    #com_ev is None (better way of phrasing) instead of = None
     com_ev = None
 
     d_max = min(n,p,d_max)
@@ -591,7 +585,6 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
             else:
                 #isnan will detect only nan objects. Will crash if strings are supplied
                 #numpy arrays will convert None to nan if converted to float
-                #TODO switch NaNs to Nones here for known
                 training = np.where((np.invert(np.isnan(known))))
                 test_index = training
                 kno = np.zeros(n).astype(int)
@@ -848,38 +841,31 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
 
     #a
     if np.isin(model, np.array(["AKBKQKDK", "AKBQKDK"])):
-        a = _Table(data = m['a'][:,0], rownames=["Ak:"], colnames=np.arange(0,m['K']))
+        a = m['a'][:,0]
 
     
     elif np.isin(model, np.array(["ABKQKDK", "ABQKDK"])):
-        a = _Table(data = m['a'][0], rownames=['A:'], colnames=[''])
+        a = m['a'][0]
 
     else:
-        colnamesA2= []
-        for i in range(0, np.max(m['d'])):
-            colnamesA2.append(f'a{i}')
-        a = _Table(data = m['a'], rownames=np.arange(0, m['K']), colnames=colnamesA2)
+        a = m['a']
 
 
     #b
     if np.isin(model, np.array(["AKJBQKDK", "AKBQKDK", "ABQKDK"])):
-        b = _Table(data = np.array([m['b'][0]]), rownames=["B:"], colnames=[''])
+        b = np.array([m['b'][0]])
     else:
-        b = _Table(data = m['b'], rownames=["Bk:"], colnames=np.arange(0, m['K']))
+        b = m['b']
     
     #d
-    d = _Table(m['d'], rownames=["dim:"], colnames=np.arange(0, m['K']))
+    d = m['d']
 
 
     #mu
-    colnamesmu = []
-    for i in range(0, p):
-        colnamesmu.append(f"V{i}")
+    mu = m['mu']
 
-    mu = _Table(m['mu'], rownames=np.arange(0, m['K']), colnames=colnamesmu)
-
-    prop = _Table(m['prop'], rownames=[''], colnames=np.arange(0, m['K']))
-    nux = _Table(m['nux'], rownames=[''], colnames=np.arange(0, m['K']))
+    prop = m['prop']
+    nux = m['nux']
 
     complexity = _T_hdc_getComplexityt(m, p, dfconstr)
 
@@ -1120,7 +1106,6 @@ def _T_funhddt_twinit(fdobj, wlist, par, nux):
     b = par['b']
     mu = par['mu']
     d = par['d']
-    Q = par['Q']
     Q1 = par['Q1']
     W = np.zeros(n*K).reshape((n,K))
 
@@ -1162,20 +1147,19 @@ def _T_funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
                 x = np.c_[x, np.transpose(fdobj[f'{i}']['coefficients'])]
         #univariate
         else:
-            x = fdobj['coefficients'].T
+            x = fdobj.coefficients
 
 
 
     p = x.shape[1]
     N = x.shape[0]
     K = par["K"]
-    nux = par["nux"].copy()
-    a = par["a"].copy()
-    b = par["b"].copy()
-    mu = par["mu"].copy()
-    d = par["d"].copy()
-    prop = par["prop"].copy()
-    Q = par["Q"].copy()
+    nux = par["nux"]
+    a = par["a"]
+    b = par["b"]
+    mu = par["mu"]
+    d = par["d"]
+    prop = par["prop"]
     Q1 = par["Q1"].copy()
     b[b<1e-6] = 1e-6
 
@@ -1218,9 +1202,6 @@ def _T_funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
     #TODO might speed up a bit if we use num variable here
     L1 = np.sum(np.log(ft_den))
     L = np.sum(np.log(np.sum(np.exp(K_pen), axis=1)) - kcon)
-    #Why assign these if they get reassigned immediately?
-    #trow = N
-    #tcol = K
     trow = np.sum(t, axis=1)
     tcol = np.sum(t, axis=0)
 
@@ -1455,7 +1436,6 @@ def _T_mypcat_fd1(data, W_m, Ti, corI):
         temp[:, i] = data[:, i] - coefmean[:, i]
 
     n = data.shape[1]
-    p=1
     v = np.sqrt(corI)
     M = np.repeat(1., n).reshape((n, 1))@(v)
     rep = (M * data.T).T
@@ -1659,9 +1639,18 @@ def _T_hdclassift_bic(par, p, dfconstr):
     model = par['model']
     K = par['K']
     #d already adjusted for Python indices
-    d = np.array(par['d'].data)
-    b = np.array(par['b'].data)
-    a = np.array(par['a'].data)
+    if not isinstance(par['d'], np.ndarray):
+        d = np.array([par['d']])
+    else:
+        d = par['d']
+    if not isinstance(par['b'], np.ndarray):
+        b = np.array([par['b']])
+    else:
+        b = par['b']
+    if not isinstance(par['a'], np.ndarray):
+        a = np.array([par['a']])
+    else:
+        a = par['a']
     #mu = par['mu']
     N = par['N']
     prop = np.array(par['prop'].data)
