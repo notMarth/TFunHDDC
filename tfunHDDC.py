@@ -121,7 +121,9 @@ class TFunHDDC:
 
     def predict(self, data):
         #TODO check if data Null
-        #TODO figure out what .T_myCallAlerts is doing
+
+        if data is None:
+            raise ValueError("Cannot predict without supplying data")
 
         #univariate
         x = data.coefficients.copy()
@@ -1425,29 +1427,65 @@ def _T_tyxf8(dfconstr, nux, n, t, tw, K, p, N):
 
 @nb.njit
 def _T_mypcat_fd1(data, W_m, Ti, corI):
-    
-    coefmean = np.zeros(data.shape)
-    for i in range(data.shape[1]):
 
-        coefmean[:, i] = np.sum(((np.ascontiguousarray(corI.T)@np.atleast_2d(np.repeat(1., data.shape[1]))).T * data.T)[:, i])/np.sum(corI)
+    #Univariate case
+    if len(data.shape) == 2:
+        
+        coefmean = np.zeros(data.shape)
+        for i in range(data.shape[1]):
 
-    temp = np.zeros(data.shape)
-    for i in range(data.shape[1]):
-        temp[:, i] = data[:, i] - coefmean[:, i]
+            coefmean[:, i] = np.sum(((np.ascontiguousarray(corI.T)@np.atleast_2d(np.repeat(1., data.shape[1]))).T * data.T)[:, i])/np.sum(corI)
 
-    n = data.shape[1]
-    v = np.sqrt(corI)
-    M = np.repeat(1., n).reshape((n, 1))@(v)
-    rep = (M * data.T).T
-    mat_cov = (rep.T@rep) / np.sum(Ti)
-    cov = (W_m@ mat_cov)@(W_m.T)
-    if not np.all(np.abs(cov-cov.T) < 1.e-12):
-        ind = np.nonzero(cov - cov.T > 1.e-12)
-        for i in ind:
-            cov[i] = cov.T[i]
+        temp = np.zeros(data.shape)
+        for i in range(data.shape[1]):
+            temp[:, i] = data[:, i] - coefmean[:, i]
 
-    valeurs_propres, vecteurs_propres = np.linalg.eig(cov)
-    bj = np.linalg.solve(W_m, np.eye(W_m.shape[0]))@np.real(vecteurs_propres)
+        n = data.shape[1]
+        v = np.sqrt(corI)
+        M = np.repeat(1., n).reshape((n, 1))@(v)
+        rep = (M * data.T).T
+        mat_cov = (rep.T@rep) / np.sum(Ti)
+        cov = (W_m@ mat_cov)@(W_m.T)
+        if not np.all(np.abs(cov-cov.T) < 1.e-12):
+            ind = np.nonzero(cov - cov.T > 1.e-12)
+            for i in ind:
+                cov[i] = cov.T[i]
+
+        valeurs_propres, vecteurs_propres = np.linalg.eig(cov)
+        bj = np.linalg.solve(W_m, np.eye(W_m.shape[0]))@np.real(vecteurs_propres)
+
+    else:
+        #Multivariate here
+        coefficients = data[0]
+        for i in range(1,len(data)):
+            np.c_[coefficients, data[i]]
+
+        coefmean = np.zeros((coefficients.shape))
+
+        for i in range(len(data)):
+            for j in range(data[i].shape[1]):
+
+                coefmean[:, j] = np.sum(((np.ascontiguousarray(corI.T)@np.atleast_2d(np.repeat(1., data[i].shape[1]))).T * data[i].T)[:, i])/np.sum(corI)
+
+        temp = np.zeros(coefmean.shape)
+
+        for i in range(len(coefficients)):
+
+                temp[:, i] = coefficients[:, i] - coefmean[:, i]
+
+        n = coefficients.shape[1]
+        v = np.sqrt(corI)
+        M = np.repeat(1., n).reshape((n, 1))@(v)
+        rep = (M * coefficients.T).T
+        mat_cov = (rep.T@rep) / np.sum(Ti)
+        cov = (W_m@ mat_cov)@(W_m.T)
+        if not np.all(np.abs(cov-cov.T) < 1.e-12):
+            ind = np.nonzero(cov - cov.T > 1.e-12)
+            for i in ind:
+                cov[i] = cov.T[i]
+
+        valeurs_propres, vecteurs_propres = np.linalg.eig(cov)
+        bj = np.linalg.solve(W_m, np.eye(W_m.shape[0]))@np.real(vecteurs_propres)
     
     return np.real(valeurs_propres), cov, bj
 

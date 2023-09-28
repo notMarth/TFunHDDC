@@ -121,12 +121,12 @@ class FunHDDC:
 
     def predict(self, data):
         #TODO check if data Null
-        #TODO figure out what .T_myCallAlerts is doing
+        #TODO multivariate
+        #TODO fix mahalahanobis distance function
 
         #univariate
         x = data.coefficients.copy()
 
-        #TODO try generating a new instance of the data. Does it still register that this is the same base?
         Np = data.basis
         p = x.shape[1]
         N = x.shape[0]
@@ -157,7 +157,7 @@ class FunHDDC:
                     aki = np.sqrt(np.diag(np.concatenate((diag1, diag2))))
                     muki = mu[i]
 
-                    mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
+                    mah_pen[:, i] = _imahalanobis(x, muki, wki, Qk, aki)
 
                     #scipy logamma vs math lgamma?
                     K_pen[:, i] = np.log(prop[i]) + loggamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + loggamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
@@ -171,7 +171,7 @@ class FunHDDC:
                     aki = np.sqrt(np.diag(np.concatenate((diag1, diag2))))
                     muki = mu[i]
                     
-                    mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
+                    mah_pen[:, i] = _imahalanobis(x, muki, wki, Qk, aki)
 
                     #Copied from previous case with b[i] changed to b[1]
                     #scipy logamma vs math lgamma?
@@ -186,7 +186,7 @@ class FunHDDC:
                     aki = np.sqrt(np.diag(np.concatenate((diag1, diag2))))
                     muki = mu[i]
 
-                    mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
+                    mah_pen[:, i] = _imahalanobis(x, muki, wki, Qk, aki)
 
                     #copied from AKJBKQKDK
                     K_pen[:, i] = np.log(prop[i]) + loggamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + loggamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
@@ -201,7 +201,7 @@ class FunHDDC:
                     aki = np.sqrt(np.diag(np.concatenate((diag1, diag2))))
                     muki = mu[i]
 
-                    mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
+                    mah_pen[:, i] = _imahalanobis(x, muki, wki, Qk, aki)
 
                     #copied from AKJBKQKDK
                     K_pen[:, i] = np.log(prop[i]) + loggamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[i]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + loggamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
@@ -215,7 +215,7 @@ class FunHDDC:
                     aki = np.sqrt(np.diag(np.concatenate((diag1, diag2))))
                     muki = mu[i]
 
-                    mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
+                    mah_pen[:, i] = _imahalanobis(x, muki, wki, Qk, aki)
 
                     #copied from AKJBKQKDK
                     K_pen[:, i] = np.log(prop[i]) + loggamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + loggamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
@@ -229,7 +229,7 @@ class FunHDDC:
                     aki = np.sqrt(np.diag(np.concatenate((diag1, diag2))))
                     muki = mu[i]
 
-                    mah_pen[:, i] = _T_imahalanobis(x, muki, wki, Qk, aki)
+                    mah_pen[:, i] = _imahalanobis(x, muki, wki, Qk, aki)
 
                     #copied from AKJBKQKDK
                     K_pen[:, i] = np.log(prop[i]) + loggamma( (nux[i] + p) / 2) - (1/2) * (s[i] + (p-d[i]) * np.log(b[0]) - np.log(self.Wlist['dety'])) - ( ( p/2)*(np.log(np.pi) + np.log(nux[i])) + loggamma(nux[i] /2) + ( (nux[i] + p) / 2) * (np.log(1 + mah_pen[:, i] / nux[i])))
@@ -265,7 +265,7 @@ def funHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, threshold=0.
 
     _T_hddc_control(locals())
 
-    model = _T_hdc_getTheModel(model, all2models=True)
+    model = _hdc_getTheModel(model, all2models=True)
     if init == "random" and nb_rep < 20:
         nb_rep = 20
 
@@ -535,8 +535,7 @@ def _funhddc_main1(fdobj, wlist, K, model,
                      mini_nb, min_individuals, noise_ctrl, com_dim,
                      kmeans_control, d_max, d_set, known, *args):
     modelNames = ["AKJBKQKDK", "AKBKQKDK", "ABKQKDK", "AKJBQKDK", "AKBQKDK", 
-                  "ABQKDK", "AKJBKQKD", "AKBKQKD", "ABKQKD", "AKJBQKD",
-                  "AKBQKD", "ABQKD"]
+                  "ABQKDK"]
     #Univariate
     if(type(fdobj) == skfda.FDataBasis):
         data = fdobj.coefficients
@@ -945,8 +944,8 @@ def _funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
     K_pen = np.repeat(0., N*K).reshape(K,N)
     ft = np.repeat(0., N*K).reshape(N,K)
     for i in range(0, K):
-        s <- np.sum(np.log(a[i, 0:d[i]]))
-        X <- x-mu[i]
+        s = np.sum(np.log(a[i, 0:d[i]]))
+        X = x-mu[i]
         Qk = Q1[f"{i}"]
         Wki = Wlist["W"]
         Qi=Wki@Qk
@@ -955,13 +954,13 @@ def _funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
         A=(-proj)@Qi@aki
         B = X-proj
         K_pen[i]=np.sum(A ** 2, axis=1)+1/b[i]*np.sum(B ** 2, axis=1)+s+(p-d[i])*np.log(b[i])-2*np.log(prop[i])+p*np.log(2*np.pi)
-     A=-1/2*(K_pen.T)
-     kcon = np.apply_along_axis(np.max,0,A)
-     ft = np.exp(A-kcon)
-     ft_den = np.sum(ft, axis=1)
-     L=np.sum(np.log(ft_den)+kcon)
-     for i in range(0, K):
-         t[:,i]=1/np.sum(np.exp((K_pen[i]-(K_pen.T))/2),axis=1)
+    A = -1/2*(K_pen.T)
+    kcon = np.apply_along_axis(np.max,0,A)
+    ft = np.exp(A-kcon)
+    ft_den = np.sum(ft, axis=1)
+    L=np.sum(np.log(ft_den)+kcon)
+    for i in range(0, K):
+        t[:,i]=1/np.sum(np.exp((K_pen[i]-(K_pen.T))/2),axis=1)
       
     #Why assign these if they get reassigned immediately?
     #trow = N
@@ -1016,7 +1015,7 @@ def _funhddt_m_step1(fdobj, Wlist, K, t, model,threshold, method, noise_ctrl, co
     fpcaobj = {}
 
     for i in range(0, K):
-        valeurs_propres, cov, U = _T_mypcat_fd1(fdobj.coefficients, Wlist['W_m'], np.atleast_2d(t[:,i]))
+        valeurs_propres, cov, U = _mypcat_fd1(fdobj.coefficients, Wlist['W_m'], np.atleast_2d(t[:,i]))
         traceVect[i] = np.sum(np.diag(valeurs_propres))
         ev[i] = valeurs_propres
         Q[f'{i}'] = U
@@ -1025,7 +1024,7 @@ def _funhddt_m_step1(fdobj, Wlist, K, t, model,threshold, method, noise_ctrl, co
     #Intrinsic dimensions selection
     
     #TODO try refactoring this for numba
-    d = _T_hdclassif_dim_choice(ev, n, method, threshold, False, noise_ctrl, d_set)
+    d = _hdclassif_dim_choice(ev, n, method, threshold, False, noise_ctrl, d_set)
     #correct for Python indices
     d+=1
 
@@ -1087,32 +1086,68 @@ def _funhddt_m_step1(fdobj, Wlist, K, t, model,threshold, method, noise_ctrl, co
 @nb.njit
 def _mypcat_fd1(data, W_m, Ti):
     
-    coefmean = np.zeros(data.shape)
-    for i in range(data.shape[1]):
+    #Univariate case
+    if len(data.shape) == 2:
 
-        coefmean[:, i] = np.sum(((np.ascontiguousarray(Ti.T)@np.atleast_2d(np.repeat(1., data.shape[1]))).T * data.T)[:, i])/np.sum(Ti)
+        coefmean = np.zeros(data.shape)
+        for i in range(data.shape[1]):
 
-    temp = np.zeros(data.shape)
-    for i in range(data.shape[1]):
-        temp[:, i] = data[:, i] - coefmean[:, i]
+            coefmean[:, i] = np.sum(((np.ascontiguousarray(Ti.T)@np.atleast_2d(np.repeat(1., data.shape[1]))).T * data.T)[:, i])/np.sum(Ti)
 
-    n = data.shape[1]
-    p=1
-    v = np.sqrt(Ti)
-    M = np.repeat(1., n).reshape((n, 1))@(v)
-    rep = (M * data.T).T
-    mat_cov = (rep.T@rep) / np.sum(Ti)
-    cov = (W_m@ mat_cov)@(W_m.T)
-    if not np.all(np.abs(cov-cov.T) < 1.e-12):
-        ind = np.nonzero(cov - cov.T > 1.e-12)
-        for i in ind:
-            cov[i] = cov.T[i]
+        temp = np.zeros(data.shape)
+        for i in range(data.shape[1]):
+            temp[:, i] = data[:, i] - coefmean[:, i]
 
-    valeurs_propres, vecteurs_propres = np.linalg.eig(cov)
-    bj = np.linalg.solve(W_m, np.eye(W_m.shape[0]))@np.real(vecteurs_propres)
+        n = data.shape[1]
+        p=1
+        v = np.sqrt(Ti)
+        M = np.repeat(1., n).reshape((n, 1))@(v)
+        rep = (M * data.T).T
+        mat_cov = (rep.T@rep) / np.sum(Ti)
+        cov = (W_m@ mat_cov)@(W_m.T)
+        if not np.all(np.abs(cov-cov.T) < 1.e-12):
+            ind = np.nonzero(cov - cov.T > 1.e-12)
+            for i in ind:
+                cov[i] = cov.T[i]
+
+        valeurs_propres, vecteurs_propres = np.linalg.eig(cov)
+        bj = np.linalg.solve(W_m, np.eye(W_m.shape[0]))@np.real(vecteurs_propres)
+
+    else:
+        #Multivariate here
+        coefficients = data[0]
+        for i in range(1,len(data)):
+            np.c_[coefficients, data[i]]
+
+        coefmean = np.zeros((coefficients.shape))
+
+        for i in range(len(data)):
+            for j in range(data[i].shape[1]):
+
+                coefmean[:, j] = np.sum(((np.ascontiguousarray(Ti.T)@np.atleast_2d(np.repeat(1., data[i].shape[1]))).T * data[i].T)[:, i])/np.sum(Ti)
+
+        temp = np.zeros(coefmean.shape)
+
+        for i in range(len(coefficients)):
+
+                temp[:, i] = coefficients[:, i] - coefmean[:, i]
+
+        n = coefficients.shape[1]
+        v = np.sqrt(Ti)
+        M = np.repeat(1., n).reshape((n, 1))@(v)
+        rep = (M * coefficients.T).T
+        mat_cov = (rep.T@rep) / np.sum(Ti)
+        cov = (W_m@ mat_cov)@(W_m.T)
+        if not np.all(np.abs(cov-cov.T) < 1.e-12):
+            ind = np.nonzero(cov - cov.T > 1.e-12)
+            for i in ind:
+                cov[i] = cov.T[i]
+
+        valeurs_propres, vecteurs_propres = np.linalg.eig(cov)
+        bj = np.linalg.solve(W_m, np.eye(W_m.shape[0]))@np.real(vecteurs_propres)
     
     return np.real(valeurs_propres), cov, bj
-
+    
 
     '''
     #Univariate here
@@ -1444,7 +1479,6 @@ def _hdc_getTheModel(model, all2models = False):
         else:
             return "ALL"
         
-    #are the models numbers?
     if type(model[0]) == np.int_:
         qui = np.nonzero(np.isin(model, np.arange(0, 6)))[0]
         if len(qui) > 0:
@@ -1475,7 +1509,7 @@ def _hdc_getTheModel(model, all2models = False):
     return new_model
 
 def _addCommas(x):
-    vfunc = np.vectorize(_T_addCommas_single)
+    vfunc = np.vectorize(_addCommas_single)
     return vfunc(x)
 
 def _addCommas_single(x):
@@ -1653,28 +1687,11 @@ def _T_hddc_control(params):
         if np.max(knownTemp) > k_temp-1:
             raise ValueError("group numbers in 'known' parameter must come from integers up to K (ie. for K=3, 0,1,2 are acceptable)")
 
-    dfstart = ('dfstart', params['dfstart'])
-    checkMissing(dfstart)
-    checkType(dfstart, (INT_TYPES, FLOAT_TYPES))
-    checkRange(dfstart, lower=2)
-
     threshold = ('threshold', params['threshold'])
     checkMissing(threshold)
     checkType(threshold, (INT_TYPES, FLOAT_TYPES))
     checkRange(threshold, upper=1, lower=0)
-    
-    dfupdate = ('dfupdate', params['dfupdate'])
-    checkMissing(dfupdate)
-    checkType(dfupdate, (str))
-    if dfupdate[1] not in ['approx', 'numeric']:
-        raise ValueError("'dfupdate' parameter should be either 'approx' or 'numeric'")
-    
-    dfconstr = ('dfconstr', params['dfconstr'])
-    checkMissing(dfconstr)
-    checkType(dfconstr, (str))
-    if dfconstr[1] not in ['no', 'yes']:
-        raise ValueError("'dfconstr' parameter should be either 'no' or 'yes'")
-    
+
     itermax = ('itermax', params['itermax'])
     checkMissing(itermax)
     checkType(itermax, (INT_TYPES))
@@ -1874,6 +1891,3 @@ def checkKMC(kmc):
     checkType(('max_iter', kmc['max_iter']), (INT_TYPES))
     checkRange(('max_iter',kmc['max_iter']), lower=1)
     checkType(kmc['algorithm'], (str))
-
-def deafaultKMC(kmc):
-    return {}
