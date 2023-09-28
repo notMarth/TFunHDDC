@@ -256,7 +256,7 @@ class TFunHDDC:
 def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50., 
              dfupdate='approx', dfconstr='no', threshold=0.1, itermax=200, 
              eps=1.e-6, init='random', criterion='bic', d_select='cattell', 
-             init_vector=None, show=True, mini_nb=[5,10], min_individuals=2,
+             init_vector=None, show=True, mini_nb=[5,10], min_individuals=4,
              mc_cores=1, nb_rep=2, keepAllRes=True, kmeans_control={'n_init':1, 'max_iter':10, 'algorithm':'lloyd'}, d_max=100,
              d_range=2, verbose=True):
     
@@ -391,8 +391,7 @@ def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50.
                 _T_estimateTime(stage=modelNo, start_time=start_time, totmod=totmod)
 
         except Exception as e:
-            raise e
-        
+            raise Exception("An error occurred while trying to use parallel. Try with mc_cores = 1 and try again").with_traceback(e.__traceback__)
 
         return res
     
@@ -1456,16 +1455,18 @@ def _T_mypcat_fd1(data, W_m, Ti, corI):
 
     else:
         #Multivariate here
-        coefficients = data[0]
-        for i in range(1,len(data)):
-            np.c_[coefficients, data[i]]
+
+        #Condense all dimensions of coefficients into one matrix
+        coefficients = np.zeros((data.shape[1], data.shape[-1]*data.shape[0]))
+        for i in range(0,len(data)):
+            coefficients[:, i*data.shape[-1]] = data[i]
 
         coefmean = np.zeros((coefficients.shape))
 
         for i in range(len(data)):
-            for j in range(data[i].shape[1]):
+            for j in range(data[i].shape[-1]):
 
-                coefmean[:, j] = np.sum(((np.ascontiguousarray(corI.T)@np.atleast_2d(np.repeat(1., data[i].shape[1]))).T * data[i].T)[:, i])/np.sum(corI)
+                coefmean[:, j] = np.sum(((np.ascontiguousarray(corI.T)@np.atleast_2d(np.repeat(1., data[i].shape[-1]))).T * data[i].T)[:, i])/np.sum(corI)
 
         temp = np.zeros(coefmean.shape)
 
