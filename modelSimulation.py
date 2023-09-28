@@ -84,8 +84,8 @@ def genModelFD(ncurves=1000, nsplines=35, alpha=[0.9,0.9,0.9], eta=[10,5,15]):
     coef = _newContaminatedSimulation(ncurves, nsplines, mu, d=d, a=a, b=b, eta=eta, alpha=alpha)
     simdata = np.full((coef['prms']['ncurves'], nsplines), 0.)
 
-    #basis = skfda.representation.basis.FourierBasis([0,100], n_basis = nsplines)
-    basis = skfda.representation.basis.BSplineBasis([0,100], n_basis = nsplines)
+    basis = skfda.representation.basis.FourierBasis([0,100], n_basis = nsplines)
+    #basis = skfda.representation.basis.BSplineBasis([0,100], n_basis = nsplines)
     evalBasis = basis.evaluate(np.arange(0,100))[:,:,0]
     finaldata = coef['X']@(evalBasis)
 
@@ -96,7 +96,7 @@ def genModelFD(ncurves=1000, nsplines=35, alpha=[0.9,0.9,0.9], eta=[10,5,15]):
     return {'data': fd.to_basis(basis), 'labels': coef['cl']}
 
 if __name__ == '__main__':
-    fdt = genModelFD()
+    fdt = genModelFD(nsplines=35, alpha=[1,1,1], eta=[0,0,0])
     print(fdt['labels'])
     fdt['data'].plot(group=fdt['labels'], group_colors=['red', 'blue', 'green'])
     plt.show()

@@ -84,7 +84,7 @@ class _Table:
     
 class FunHDDC:
 
-    def __init__(self, Wlist, model, K, d, a, b, mu, prop, nux, ev, Q, Q1,
+    def __init__(self, Wlist, model, K, d, a, b, mu, prop, ev, Q,
                  fpca, loglik, loglik_all, posterior, cl, com_ev, N,
                  complexity, threshold, d_select, converged, index, bic, icl, basis):
         self.Wlist = Wlist
@@ -95,10 +95,9 @@ class FunHDDC:
         self.b = b
         self.mu = mu
         self.prop = prop
-        self.nux = nux
+        
         self.ev = ev
         self.Q=Q
-        self.Q1 = Q1
         self.fpca = fpca
         self.loglik = loglik
         self.loglik_all = loglik_all
@@ -749,7 +748,7 @@ def _funhddc_main1(fdobj, wlist, K, model,
 
     params = {'wlist': wlist, 'model':model, 'K':K, 'd':d,
                 'a':a, 'b':b, 'mu':mu, 'prop':prop, 'ev': m['ev'],
-                'Q': m['Q'], 'Q1':m['Q1'], 'fpca': m['fpcaobj'], 
+                'Q': m['Q'], 'fpca': m['fpcaobj'], 
                 'loglik':likely[-1], 'loglik_all': likely, 'posterior': t,
                 'class': cl, 'com_ev': com_ev, 'N':n, 'complexity':complexity,
                 'threshold': threshold, 'd_select': method, 
@@ -761,7 +760,7 @@ def _funhddc_main1(fdobj, wlist, K, model,
 
     tfunobj = FunHDDC(Wlist=params['wlist'], model=params['model'], K=params['K'], d=params['d'], 
                         a=params['a'], b=params['b'], mu=params['mu'], prop=params['prop'],
-                        ev=params['ev'], Q=params['Q'], Q1=params['Q1'], fpca=params['fpca'],
+                        ev=params['ev'], Q=params['Q'], fpca=params['fpca'],
                         loglik=params['loglik'], loglik_all=params['loglik_all'], posterior=params['posterior'],
                         cl=params['class'], com_ev=params['com_ev'], N=params['N'], complexity=params['complexity'],
                         threshold=params['threshold'], d_select=params['d_select'], converged=params['converged'], 
@@ -801,7 +800,7 @@ def _funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
     d = par["d"].copy()
     prop = par["prop"].copy()
     Q = par["Q"].copy()
-    Q1 = par["Q1"].copy()
+    
     b[b<1e-6] = 1e-6
 
     if clas > 0:
@@ -815,21 +814,29 @@ def _funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
     for i in range(0, K):
         s = np.sum(np.log(a[i, 0:d[i]]))
         X = x-mu[i]
-        Qk = Q1[f"{i}"]
+        
+        Qk = Q[f"{i}"]
         Wki = Wlist["W"]
         Qi=Wki@Qk
+        
         proj=(X@Qi)@(Qi.T)
+        
         aki = np.sqrt(np.diag((1/a[i, 0:int(d[i])])))
+        
         A=(-proj)@Qi@aki
         B = X-proj
         K_pen[i]=np.sum(A ** 2, axis=1)+1/b[i]*np.sum(B ** 2, axis=1)+s+(p-d[i])*np.log(b[i])-2*np.log(prop[i])+p*np.log(2*np.pi)
     A = -1/2*(K_pen.T)
-    kcon = np.apply_along_axis(np.max,0,A)
-    ft = np.exp(A-kcon)
+   
+    kcon = np.apply_along_axis(np.max,1,A)
+    
+    ft = np.exp(A-np.atleast_2d(kcon).T)
+    
     ft_den = np.sum(ft, axis=1)
+    
     L=np.sum(np.log(ft_den)+kcon)
     for i in range(0, K):
-        t[:,i]=1/np.sum(np.exp((K_pen[i]-(K_pen.T))/2),axis=1)
+        t[:,i]=1/np.sum(np.exp((np.atleast_2d(K_pen[i]).T-(K_pen.T))/2),axis=1)
       
     #Why assign these if they get reassigned immediately?
     #trow = N
@@ -876,7 +883,7 @@ def _funhddt_m_step1(fdobj, Wlist, K, t, model,threshold, method, noise_ctrl, co
     mu = np.repeat(0., K*p).reshape((K, p))
 
     for i in range(0, K):
-        mu[i] = np.sum(np.atleast_2d(t[:,i])*x, axis=1)/n[i]    
+        mu[i] = np.sum(np.atleast_2d(t[:,i])*x.T, axis=1)/n[i]    
     traceVect = np.zeros(K)
     ev = np.repeat(0., K*p).reshape((K,p))
 
@@ -899,7 +906,7 @@ def _funhddt_m_step1(fdobj, Wlist, K, t, model,threshold, method, noise_ctrl, co
 
     #Setup Qi matrices
 
-    Q1 = Q.copy()
+    
     for i in range(0, K):
         # verify that in R, matrix(Q[[i]]... ) just constructs a matrix with same dimenstions as Q[[i]]...
         Q[f'{i}'] = Q[f'{i}'][:,0:d[i]]
@@ -938,7 +945,7 @@ def _funhddt_m_step1(fdobj, Wlist, K, t, model,threshold, method, noise_ctrl, co
             b = b+remainEV*prop[i]
         bi[0:K] = b/(min(N,p)-eps)
 
-    result = {'model':model, "K": K, "d":d, "a":ai, "b": bi, "mu":mu, "prop": prop, "ev":ev, "Q":Q, "fpcaobj":fpcaobj, "Q1":Q1}
+    result = {'model':model, "K": K, "d":d, "a":ai, "b": bi, "mu":mu, "prop": prop, "ev":ev, "Q":Q, "fpcaobj":fpcaobj}
     return result        
 
 
@@ -1421,7 +1428,7 @@ def _diago(v):
 
     return res
 
-@nb.njit
+
 
 
 def _estimateTime(stage, start_time=0, totmod=0):

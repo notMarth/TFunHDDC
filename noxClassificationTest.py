@@ -1,4 +1,5 @@
 import tfunHDDC as tfun
+import funHDDC as fun
 import numpy as np
 import NOxBenchmark as NOx
 from sklearn import metrics as met
