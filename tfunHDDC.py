@@ -14,6 +14,7 @@ from scipy.special import binom
 from scipy.optimize import brentq
 from shutil import get_terminal_size
 import numba as nb
+import os
 #------------------------------------------------------------------------------#
 
 #GLOBALS
@@ -258,10 +259,13 @@ def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50.
              eps=1.e-6, init='random', criterion='bic', d_select='cattell', 
              init_vector=None, show=True, mini_nb=[5,10], min_individuals=4,
              mc_cores=1, nb_rep=2, keepAllRes=True, kmeans_control={'n_init':1, 'max_iter':10, 'algorithm':'lloyd'}, d_max=100,
-             d_range=2, verbose=True):
+             d_range=2, verbose=True, Numba=True):
     
     com_dim = None
     noise_ctrl = 1.e-8
+
+    if not isinstance(data, skfda.FDataBasis):
+        MULTI = True
 
     _T_hddc_control(locals())
 
@@ -288,16 +292,16 @@ def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50.
         Wlist = {'W': W, 'W_m': W_m, 'dety':dety}
 
     else:
-        x = fdobj['0'].coefficients
+        x = fdobj[0].coefficients
 
         for i in range(1, len(fdobj)):
-            x = np.c_[x, fdobj[f'{i}'].coefficients]
+            x = np.c_[x, fdobj[i].coefficients]
 
         p = x.shape[1]
 
         W_fdobj = []
         for i in range(len(data)):
-            W_fdobj.append(skfda.misc.inner_product_matrix(data[f'{i}'].basis, data[f'{i}'].basis))
+            W_fdobj.append(skfda.misc.inner_product_matrix(data[i].basis, data[i].basis))
 
         prow = W_fdobj[-1].shape[0]
         pcol = len(data)*prow
@@ -310,7 +314,7 @@ def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50.
                     np.zeros((prow, pcol - (i+1) * W_fdobj[-1].shape[1]))]
             W_list[f'{i-1}'] = W2
 
-        W_tot = np.concatenate((W1,W_list['0']))
+        W_tot = np.concatenate((W1,W_list[f'{0}']))
         if len(data) > 2:
             for i in range(1, len(data)-1):
                 W_tot = np.concatenate((W_tot, W_list[f'{i}']))
@@ -391,8 +395,7 @@ def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50.
                 _T_estimateTime(stage=modelNo, start_time=start_time, totmod=totmod)
 
         except Exception as e:
-            raise Exception("An error occurred while trying to use parallel. Try with mc_cores = 1 and try again").with_traceback(e.__traceback__)
-
+            raise e
         return res
     
 
@@ -439,7 +442,8 @@ def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50.
 
         #TODO add descriptive text here explaining that this is an unknown error
         except Exception as e:
-            raise e
+            raise Exception("An error occurred while trying to use parallel. Try with mc_cores = 1 and try again").with_traceback(e.__traceback__)
+
     if verbose:
         mkt_expand = mkt_expand[:,0]
     res = np.array(res)
@@ -540,15 +544,16 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
         data = fdobj.coefficients
 
     
-    if type(fdobj) == dict:
+    else:
         #Multivariate
-        if len(fdobj.keys() > 1):
-            data = fdobj['0'].coefficients
+        if len(fdobj) > 1:
+            MULTI = True
+            data = fdobj[0].coefficients
             for i in range(1, len(fdobj)):
-                data = np.c_[data, fdobj[f'{i}'].coefficients]
-        #univariate in dict
+                data = np.c_[data, fdobj[i].coefficients]
+        #univariate in nested list
         else:
-            data = fdobj['0'].coefficients
+            data = fdobj[0].coefficients
 
     n, p = data.shape
     com_ev = None
@@ -886,13 +891,18 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
     params['BIC'] = bic_icl["bic"]
     params["ICL"] = bic_icl['icl']
 
+    try:
+        base = fdobj.basis
+    except:
+        base = fdobj[0].basis
+
     tfunobj = TFunHDDC(Wlist=params['wlist'], model=params['model'], K=params['K'], d=params['d'], 
                         a=params['a'], b=params['b'], mu=params['mu'], prop=params['prop'], nux=params['nux'],
                         ev=params['ev'], Q=params['Q'], Q1=params['Q1'], fpca=params['fpca'],
                         loglik=params['loglik'], loglik_all=params['loglik_all'], posterior=params['posterior'],
                         cl=params['class'], com_ev=params['com_ev'], N=params['N'], complexity=params['complexity'],
                         threshold=params['threshold'], d_select=params['d_select'], converged=params['converged'], 
-                        index=params['index'], bic=params['BIC'], icl=params['ICL'], basis=fdobj.basis)
+                        index=params['index'], bic=params['BIC'], icl=params['ICL'], basis=base)
     return tfunobj
 
 def _T_funhddt_init(fdobj, Wlist, K, t, nux, model, threshold, method, noise_ctrl, com_dim, d_max, d_set):
@@ -902,12 +912,15 @@ def _T_funhddt_init(fdobj, Wlist, K, t, nux, model, threshold, method, noise_ctr
         x = fdobj.coefficients
 
     
-    if type(fdobj) == dict or type(fdobj) == pd.DataFrame:
+    else:
         #Multivariate
-        if len(fdobj.keys()) > 1:
-            x = fdobj['0'].coefficients.copy()
+        if len(fdobj) > 1:
+            x = fdobj[0].coefficients.copy()
             for i in range(1, len(fdobj)):
-                x = np.c_[x, fdobj[f'{i}'].coefficients.copy()]
+                x = np.c_[x, fdobj[i].coefficients.copy()]
+
+        else:
+            x = fdobj[0].coefficients
 
     N = x.shape[0]
     p = x.shape[1]
@@ -1028,35 +1041,29 @@ def _T_initmypca_fd1(fdobj, Wlist, Ti):
 
     #Multivariate
     else:
-        mean_fd = {}
         temp = fdobj.copy()
-        for i in range(len(fdobj)):
 
-            mean_fd[f'{i}'] = temp[f'{i}'].copy()
-
-        coef = temp['0'].coefficients
+        coef = temp[0].coefficients
         for i in range(1, len(fdobj)):
-            coef = np.c_[coef, temp[f'{i}'].coefficients.copy()]
+            coef = np.c_[coef, temp[i].coefficients.copy()]
 
         mat_cov = np.cov(m=coef, aweights=Ti, ddof=0, rowvar=False)
         coefmean = np.average(coef, axis=0, weights=Ti)
 
         n_lead = 0
         #R Doesn't transpose this here, might need shape[1] instead
-        n_var = temp['0'].coefficients.shape[1]
+        n_var = temp[0].coefficients.shape[1]
         #Sweep
-        tempi = temp['0'].copy()
+        tempi = temp[0].copy()
         tempi.coefficients = np.apply_along_axis(lambda row: row - coefmean[(n_lead):(n_var + n_lead)], axis=1, arr=tempi.coefficients)
 
-        mean_fd['0'].coefficients = coefmean[(n_lead):(n_var + n_lead)]
 
         for i in range(1, len(fdobj)):
-            tempi = temp[f'{i}'].copy()
+            tempi = temp[i].copy()
             n_lead = n_lead + n_var
             
-            n_var = temp[f'{i}'].coefficients.shape[1]
+            n_var = temp[i].coefficients.shape[1]
             tempi.coefficients = np.apply_along_axis(lambda row: row - coefmean[(n_lead):(n_var + n_lead)], axis=1, arr=tempi.coefficients)
-            mean_fd[f'{i}'].coefficients = coefmean[(n_lead):(n_var + n_lead)]
 
         cov = (Wlist['W_m']@mat_cov)@(Wlist['W_m'].T)
         if not check_symmetric(cov, 1.e-12):
@@ -1065,15 +1072,9 @@ def _T_initmypca_fd1(fdobj, Wlist, Ti):
 
         valeurs_propres, vecteurs_propres = scil.eig(cov)
         bj = scil.solve(Wlist['W_m'], np.eye(Wlist['W_m'].shape[0]))@np.real(vecteurs_propres)
-        fonctionspropres = temp['0'].copy()
-        fonctionspropres.coefficients = bj
-        scores = (coef@Wlist['W'])@bj
 
-        varprop = valeurs_propres / np.sum(valeurs_propres)
-
-        ipcafd = {'valeurs_propres': np.real(valeurs_propres), 'harmonic': fonctionspropres, 
-                  'covariance': cov, 'U': bj, 'varprop': varprop,
-                  'meanfd': mean_fd, 'mux': coefmean}
+        ipcafd = {'valeurs_propres': np.real(valeurs_propres),
+                  'covariance': cov, 'U': bj, 'mux': coefmean}
 
     return ipcafd
 
@@ -1081,24 +1082,18 @@ def _T_initmypca_fd1(fdobj, Wlist, Ti):
 # Why not just pass in x instead of fdobj?
 def _T_funhddt_twinit(fdobj, wlist, par, nux):
 
-    #try this if fdobj is an fdata (Univariate only right now)
     if(type(fdobj) == skfda.FDataBasis):
        x = fdobj.coefficients
 
-    #For R testing if fdobj gets passed as a dict
-    #Should also work for dataframe (converts to pandas dataframe)
-    #Will be changed outside of R testing so that the expected element in the
-    #dict or dataframs is an FDataBasis
-    if type(fdobj) == dict:
+    else:
         #Multivariate
-        #Here in R, the first element will be named '1'
-        if len(fdobj.keys()) > 1:
-            x = fdobj['0'].coefficients
+        if len(fdobj) > 1:
+            x = fdobj[0].coefficients
             for i in range(1, len(fdobj)):
-                x = np.c_[x, fdobj[f'{i}'].coefficients]
+                x = np.c_[x, fdobj[i].coefficients]
         #univariate
         else:
-            x = fdobj['0'].coefficients
+            x = fdobj[0].coefficients
 
     p = x.shape[1]
     n = x.shape[0]
@@ -1131,24 +1126,18 @@ def _T_funhddt_twinit(fdobj, wlist, par, nux):
 
 def _T_funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
 
-   #try this if fdobj is an fdata (Univariate only right now)
     if(type(fdobj) == skfda.FDataBasis):
-        x = fdobj.coefficients
+       x = fdobj.coefficients
 
-    #For R testing if fdobj gets passed as a dict
-    #Should also work for dataframe (converts to pandas dataframe)
-    #Will be changed outside of R testing so that the expected element in the
-    #dict or dataframs is an FDataBasis
-    if type(fdobj) == dict or type(fdobj) == pd.DataFrame:
+    else:
         #Multivariate
-        #Here in R, the first element will be named '1'
-        if len(fdobj.keys()) > 1:
-            x = np.transpose(fdobj['1']['coefficients'])
-            for i in range(0, len(fdobj)):
-                x = np.c_[x, np.transpose(fdobj[f'{i}']['coefficients'])]
+        if len(fdobj) > 1:
+            x = fdobj[0].coefficients
+            for i in range(1, len(fdobj)):
+                x = np.c_[x, fdobj[i].coefficients]
         #univariate
         else:
-            x = fdobj.coefficients
+            x = fdobj[0].coefficients
 
 
 
@@ -1224,19 +1213,25 @@ def _T_funhddt_e_step1(fdobj, Wlist, par, clas=0, known=None, kno=None):
 def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model, 
                        threshold, method, noise_ctrl, com_dim, d_max, d_set):
 
-    #Univariate Case    
     if(type(fdobj) == skfda.FDataBasis):
-        x = fdobj.coefficients
+       MULTI = False
+       x = fdobj.coefficients
 
-    if type(fdobj) == dict:
-        #Multivariate case
-        if len(fdobj.keys()) > 1:
-            x = fdobj['0'].coefficients
+    else:
+        #Multivariate
+        if len(fdobj) > 1:
+            MULTI = True
+            data = []
+            x = fdobj[0].coefficients
+            data.append(fdobj[0].coefficients)
             for i in range(1, len(fdobj)):
-                x = np.c_[x, fdobj[f'{i}'].coefficients]
-        #univariate but as dict
+                x = np.c_[x, fdobj[i].coefficients]
+                data.append(fdobj[i].coefficients)
+
+            data = np.array(data)
+        #univariate
         else:
-            x = fdobj['0'].coeficients
+            x = fdobj[0].coefficients
 
     N = x.shape[0]
     p = x.shape[1]
@@ -1283,7 +1278,10 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
     fpcaobj = {}
 
     for i in range(0, K):
-        valeurs_propres, cov, U = _T_mypcat_fd1(fdobj.coefficients, Wlist['W_m'], np.atleast_2d(t[:,i]), np.atleast_2d(corX[:,i]))
+        if MULTI:
+            valeurs_propres, cov, U = _T_mypcat_fd1_Multi(data, Wlist['W_m'], np.atleast_2d(t[:,i]), np.atleast_2d(corX[:,i]))
+        else:
+            valeurs_propres, cov, U = _T_mypcat_fd1_Uni(data, Wlist['W_m'], np.atleast_2d(t[:,i]), np.atleast_2d(corX[:,i]))
         traceVect[i] = np.sum(np.diag(valeurs_propres))
         ev[i] = valeurs_propres
         Q[f'{i}'] = U
@@ -1425,69 +1423,72 @@ def _T_tyxf8(dfconstr, nux, n, t, tw, K, p, N):
     return newnux
 
 @nb.njit
-def _T_mypcat_fd1(data, W_m, Ti, corI):
+def _T_mypcat_fd1_Uni(data, W_m, Ti, corI):
 
     #Univariate case
-    if len(data.shape) == 2:
-        
-        coefmean = np.zeros(data.shape)
-        for i in range(data.shape[1]):
+    coefmean = np.zeros(data.shape)
+    for i in range(data.shape[1]):
 
-            coefmean[:, i] = np.sum(((np.ascontiguousarray(corI.T)@np.atleast_2d(np.repeat(1., data.shape[1]))).T * data.T)[:, i])/np.sum(corI)
+        coefmean[:, i] = np.sum(((np.ascontiguousarray(corI.T)@np.atleast_2d(np.repeat(1., data.shape[1]))).T * data.T)[:, i])/np.sum(corI)
 
-        temp = np.zeros(data.shape)
-        for i in range(data.shape[1]):
-            temp[:, i] = data[:, i] - coefmean[:, i]
+    # Swept values not used anywhere
+    # temp = np.zeros(data.shape)
+    # for i in range(data.shape[1]):
+    #     temp[:, i] = data[:, i] - coefmean[:, i]
 
-        n = data.shape[1]
-        v = np.sqrt(corI)
-        M = np.repeat(1., n).reshape((n, 1))@(v)
-        rep = (M * data.T).T
-        mat_cov = (rep.T@rep) / np.sum(Ti)
-        cov = (W_m@ mat_cov)@(W_m.T)
-        if not np.all(np.abs(cov-cov.T) < 1.e-12):
-            ind = np.nonzero(cov - cov.T > 1.e-12)
-            for i in ind:
-                cov[i] = cov.T[i]
+    n = data.shape[1]
+    v = np.sqrt(corI)
+    M = np.repeat(1., n).reshape((n, 1))@(v)
+    rep = (M * data.T).T
+    mat_cov = (rep.T@rep) / np.sum(Ti)
+    cov = (W_m@ mat_cov)@(W_m.T)
+    if not np.all(np.abs(cov-cov.T) < 1.e-12):
+        ind = np.nonzero(cov - cov.T > 1.e-12)
+        for i in ind:
+            cov[i] = cov.T[i]
+    valeurs_propres, vecteurs_propres = np.linalg.eig(cov)
+    bj = np.linalg.solve(W_m, np.eye(W_m.shape[0]))@np.real(vecteurs_propres)
+    return np.real(valeurs_propres), cov, bj
 
-        valeurs_propres, vecteurs_propres = np.linalg.eig(cov)
-        bj = np.linalg.solve(W_m, np.eye(W_m.shape[0]))@np.real(vecteurs_propres)
 
-    else:
-        #Multivariate here
+@nb.njit
+def _T_mypcat_fd1_Multi(data, W_m, Ti, corI):
 
-        #Condense all dimensions of coefficients into one matrix
-        coefficients = np.zeros((data.shape[1], data.shape[-1]*data.shape[0]))
-        for i in range(0,len(data)):
-            coefficients[:, i*data.shape[-1]] = data[i]
+    #Multivariate here
 
-        coefmean = np.zeros((coefficients.shape))
+    #Condense all dimensions of coefficients into one matrix
+    # coefficients = np.zeros((data.shape[1], data.shape[-1]*data.shape[0]))
+    # for i in range(0,len(data)):
+    #     coefficients[0:data.shape[1], i*data.shape[-1]] = data[i]
+    coefficients = data.reshape(data.shape[1], data.shape[-1]*data.shape[0])
+    coefmean = np.zeros((coefficients.shape))
 
-        for i in range(len(data)):
-            for j in range(data[i].shape[-1]):
+    for i in range(len(data)):
+        for j in range(data[i].shape[-1]):
 
-                coefmean[:, j] = np.sum(((np.ascontiguousarray(corI.T)@np.atleast_2d(np.repeat(1., data[i].shape[-1]))).T * data[i].T)[:, i])/np.sum(corI)
+            coefmean[:, j] = np.sum(((np.ascontiguousarray(corI.T)@np.atleast_2d(np.repeat(1., data[i].shape[-1]))).T * data[i].T)[:, i])/np.sum(corI)
 
-        temp = np.zeros(coefmean.shape)
+    # Swept values not used anywhere
+    # temp = np.zeros(coefmean.shape)
 
-        for i in range(len(coefficients)):
+    # for i in range(len(coefficients)):
 
-                temp[:, i] = coefficients[:, i] - coefmean[:, i]
+    #         temp[:, i] = coefficients[:, i] - coefmean[:, i]
 
-        n = coefficients.shape[1]
-        v = np.sqrt(corI)
-        M = np.repeat(1., n).reshape((n, 1))@(v)
-        rep = (M * coefficients.T).T
-        mat_cov = (rep.T@rep) / np.sum(Ti)
-        cov = (W_m@ mat_cov)@(W_m.T)
-        if not np.all(np.abs(cov-cov.T) < 1.e-12):
-            ind = np.nonzero(cov - cov.T > 1.e-12)
-            for i in ind:
-                cov[i] = cov.T[i]
+    n = coefficients.shape[1]
+    v = np.sqrt(corI)
+    M = np.repeat(1., n).reshape((n, 1))@(v)
+    rep = (M * coefficients.T).T
+    mat_cov = (rep.T@rep) / np.sum(Ti)
+    cov = (W_m@ mat_cov)@(W_m.T)
+    if not np.all(np.abs(cov-cov.T) < 1.e-12):
+        ind = np.nonzero(cov - cov.T > 1.e-12)
+        for i in ind:
+            cov[i] = cov.T[i]
 
-        valeurs_propres, vecteurs_propres = np.linalg.eig(cov)
-        bj = np.linalg.solve(W_m, np.eye(W_m.shape[0]))@np.real(vecteurs_propres)
-    
+    valeurs_propres, vecteurs_propres = np.linalg.eig(cov)
+    bj = np.linalg.solve(W_m, np.eye(W_m.shape[0]))@np.real(vecteurs_propres)
+
     return np.real(valeurs_propres), cov, bj
 
 
@@ -1564,7 +1565,6 @@ def _T_mypcat_fd1(data, W_m, Ti, corI):
         pcafd = {'valeurs_propres': np.real(valeurs_propres), 'harmonic': fonctionspropres, 'scores': scores,
                  'covariance': cov, 'U':bj, 'varprop': varprop, 'meanfd': mean_fd}
     '''
-    return pcafd
 
 def _T_hddc_ari(x, y):
     if type(x) != np.ndarray:
@@ -2025,12 +2025,12 @@ def _T_hddc_control(params):
         data_length = 0
         row_length = 0
         for i in range(len(data[1])):
-            checkType((f'data', data[1][f'{i}'].coefficients), (LIST_TYPES, (INT_TYPES, FLOAT_TYPES, LIST_TYPES)))
-            naCheck=np.sum(data[1][f'{i}'].coefficients)
+            checkType((f'data', data[1][i].coefficients), (LIST_TYPES, (INT_TYPES, FLOAT_TYPES, LIST_TYPES)))
+            naCheck=np.sum(data[1][i].coefficients)
             if naCheck in UNKNOWNS or pd.isna(naCheck):
                 raise ValueError(f"'data' parameter contains unsupported values. Please remove NaNs, NAs, infs, etc. if they are present")
-            data_length += data[1][f'{i}'].coefficients.shape[1]
-            row_length += data[1][f'{i}'].coefficients.shape[0]
+            data_length += data[1][i].coefficients.shape[1]
+            row_length += data[1][i].coefficients.shape[0]
 
         if np.any(np.array(K[1])>2*data_length):
             raise ValueError("The number of observations in the data must be at least twice the number of clusters")
