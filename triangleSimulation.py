@@ -106,7 +106,7 @@ def genTriangleScenario1():
     fdt = [fd1, fd2]
     
     target = np.concatenate((np.repeat(0, 80), np.repeat(4, 20), np.repeat(1, 100), np.repeat(2, 80), np.repeat(5, 20), np.repeat(3, 100)))
-    return Bunch(data = fdt, target = target)
+    return {'data': fdt, 'labels': target}
     
 def plotTriangles(fdt):
     CL = ["black", "red", "green", "blue", "purple", "brown"]
