@@ -14,6 +14,7 @@ from scipy.special import binom
 from scipy.optimize import brentq
 from shutil import get_terminal_size
 import numba as nb
+from numba import complex128
 #------------------------------------------------------------------------------#
 
 #GLOBALS
@@ -970,7 +971,10 @@ def _mypcat_fd1_Uni(data, W_m, Ti):
         for i in ind:
             cov[i] = cov.T[i]
 
-    valeurs_propres, vecteurs_propres = np.linalg.eig(cov)
+    valeurs_propres, vecteurs_propres = np.linalg.eig(cov.astype(complex128))
+    for i in range(len(valeurs_propres)):
+        if np.imag(i) > 0:
+            valeurs_propres[i] = 0
     bj = np.linalg.solve(W_m, np.eye(W_m.shape[0]))@np.real(vecteurs_propres)
 
     return np.real(valeurs_propres), cov, bj
@@ -1002,7 +1006,10 @@ def _mypcat_fd1_Multi(data, W_m, Ti):
         for i in ind:
             cov[i] = cov.T[i]
 
-    valeurs_propres, vecteurs_propres = np.linalg.eig(cov)
+    valeurs_propres, vecteurs_propres = np.linalg.eig(cov.astype(complex128))
+    for i in range(len(valeurs_propres)):
+        if np.imag(i) > 0:
+            valeurs_propres[i] = 0
     bj = np.linalg.solve(W_m, np.eye(W_m.shape[0]))@np.real(vecteurs_propres)
 
     return np.real(valeurs_propres), cov, bj
