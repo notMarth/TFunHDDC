@@ -14,6 +14,7 @@ from scipy.special import binom
 from scipy.optimize import brentq
 from shutil import get_terminal_size
 import numba as nb
+from numba import complex128
 import os
 #------------------------------------------------------------------------------#
 
@@ -25,6 +26,12 @@ FLOAT_TYPES = (float, np.floating)
 NUMERIC_TYPES = (INT_TYPES, FLOAT_TYPES)
 
 def check_symmetric(a, tol=1e-8):
+    '''
+    Check if matrix is symmetric to a given tolerance.
+
+    a -- the matrix to be checked
+    tol -- the tolerance being checked
+    '''
     return np.all(np.abs(a-a.T) < tol)
 
 
@@ -37,8 +44,6 @@ class _Table:
     data : numpy array
     rownames : numpy array
     colnames : numpy array
-
-    
     """
     def __init__(self, data=None, rownames=None, colnames=None):
         self.data = data
@@ -84,6 +89,75 @@ class _Table:
         return len(self.data)
     
 class TFunHDDC:
+    '''
+    Description
+    -----------
+    Object containing the parameters and result of clustering functional data
+    via tfunHDDC. Can predict clusters on functional data on the same size basis
+    as the one originally clustered.
+
+    Attributes
+    ----------
+    Wlist : `dict`
+        list containing the following: the inner product matrix of the 
+        functional data's bases with themselves, the cholesky decomposition of 
+        the previous matrix, and the determinant of the first matrix
+
+    model : `str` 
+        model chosen for best clustering of original data
+    K : `int` 
+        number of clusters chosen for best clustering of original data
+    d : `np.ndarray` of `ints`
+        number of intrinsic dimensions found for best clustering of original
+        data
+    a : `np.ndarray` of `floats` 
+        a matrix for best clustering of original data
+    b : `np.ndarray` of `floats` 
+        b matrix for best clustering of original data
+    mu : `np.ndarray` of `floats`
+        :math:`\mu_k` is a vector of means found in the m-step
+    prop : `np.ndarray` of `floats`
+        vector of proportions used for the mixture distributions
+    nux : `np.ndarray` of `floats`
+        vector of degrees of freedom
+    ev : `np.ndarray` of `floats`
+        matrix containing eigenvectors
+    Q : `np.ndarray` of `floats`
+        ---NOT USED---
+    Q1 : `np.ndarray` of `floats`
+        matrix of coefficients of eigenfunctions
+    fpca : `dict`
+        ---NOT USED---
+    loglik : `float`
+        log likelihood calculated for best clustering of original data
+    loglik_all : `np.ndarray` of `floats`
+        log likelihood calculated for all parameter combinations and
+        repetitions during clustering of original data
+    posterior : `np.ndarray` of `floats`
+        posterior probability distribution calculated
+    cl : `np.ndarray` of `ints` 
+        chosen clustering of data
+    com_ev : `int`
+        ---NOT USED---
+    N : `int`
+        number of rows in coefficients of basis functions
+    complexity : `int`
+        number of free parameters to be estimated
+    threshold : `float`
+        threshold used for best clustering of original data
+    d_select : `str`
+        method used to decided intrinsic dimensions
+    converged : `bool`
+        a boolean indicating whether the tfunHDDC algorithm converged
+        to a clustering or not
+    index -- 
+    bic : `float`
+        Bayseian information criterion
+    icl : `float`
+        bic added with the addition of the estimated mean entropy
+    basis : `Basis` 
+        set of basis functions that the data was fit on
+    '''
 
     def __init__(self, Wlist, model, K, d, a, b, mu, prop, nux, ev, Q, Q1,
                  fpca, loglik, loglik_all, posterior, cl, com_ev, N,
@@ -121,7 +195,14 @@ class TFunHDDC:
         self.basis = basis
 
     def predict(self, data):
-        #TODO check if data Null
+        '''
+        predict takes a FDataBasis fit on the same number of basis functions as
+        the original clustered data and uses the result of the original
+        clustering to predict a clustering for the new set of data.
+
+        data -- functional data fit on the same number of basis functions as
+        the original clustered data.
+        '''
 
         if data is None:
             raise ValueError("Cannot predict without supplying data")
@@ -129,7 +210,6 @@ class TFunHDDC:
         #univariate
         x = data.coefficients.copy()
 
-        #TODO try generating a new instance of the data. Does it still register that this is the same base?
         Np = data.basis
         p = x.shape[1]
         N = x.shape[0]
@@ -258,9 +338,103 @@ def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50.
              dfupdate='approx', dfconstr='no', threshold=0.1, itermax=200, 
              eps=1.e-6, init='random', criterion='bic', d_select='cattell', 
              init_vector=None, show=True, mini_nb=[5,10], min_individuals=4,
-             mc_cores=1, nb_rep=2, keepAllRes=True, kmeans_control={'n_init':1, 'max_iter':10, 'algorithm':'lloyd'}, d_max=100,
-             d_range=2, verbose=True, Numba=True):
-    
+             mc_cores=1, nb_rep=2, keepAllRes=False, 
+             kmeans_control={'n_init':1, 'max_iter':10, 'algorithm':'lloyd'}, 
+             d_max=100, d_range=2, verbose=True, Numba=True):
+    '''
+    Description
+    -----------
+    tfunHDDC takes the parameters from the user and sets them up to run the
+    main algorithm by checking that arguments are of the correct type and that
+    they are put into the correct format before running the algorithm. It also
+    handles multi-processing by running the algorithm asynchronously with the
+    number of cores specified by the user. After the algorithm finishes, the
+    output is then arranged into the correct format for display and the correct
+    set of parameters that gave the best fit clustering are outputted as a 
+    TFunHDDC object.
+
+    Parameters
+    ----------
+    data : `FDataBasis` or `list` of `FDataBasis`
+        a `FDataBasis` object that contains functional data fit to a set of
+        basis functions, or a list of these
+    K : `int` or `list` of `int`, default=np.arange(1,11)
+        number of clusters to run the algorithm with. If given as a `list` or
+        list-like, the algorithm will run with each unique number of clusters.
+    model : `str` or `list` of `str`, default='AKJBKQKDK'
+        the type of model to be used. `tfunHDDC` supports the following
+        model names: `'AKJBKQKDK'`, `'AKJBQKDK'`, `'AKBKQKDK'`, `'AKBQKDK'`, 
+        `'ABKQKDK'`, `'ABQKDK'`. Can be given with any capitilization.
+    known : `list` of `ints` or `np.NaNs`, default=None
+        a vector given known clustering of data. Values that are not known
+        should be given as `np.NaN`. When not None, TFunHDDC will perform
+        classification. If all values are given in known, then TFunHDDC will 
+        perform parameter estimation.
+    dfstart : `int`, default=50
+        the degrees of freedom given as an `int` used to initialize the 
+        t-distribution.
+    dfupdate : {'approx', 'numeric'}, default='approx'
+        given as either `'numeric'` or `'approx'`. Approx is the default and results
+        in using a closed form approximation. Numeric makes use of the `scipy` 
+        function `brentq`.
+    dfcontr : {'yes', 'no'}, default='yes'
+        given as either `'yes'` or `'no'`. When yes, the degrees of freedom
+        between clusters remains the same. If no, they can be different.
+    threshold : `float` or `list` of `floats`, default=0.1
+        the threshold of the Cattell scree-test used for selecting the
+        group specific intrinsic dimensions
+    itermax: `int`, default=200
+        the number of iterations that the algorithm is allowed to perform
+        before returning that it diverged.
+    eps: `float`, default=1.e^-6
+        threshold for convergence of the algorithm
+    init: {'kmeans', 'random', 'mini-em', 'vector'}, default='kmeans'
+        the method of initializing the clusters. Options are: `'kmeans'`,
+        `'random'`, `'mini-em'` and `'vector'`.
+    criterion : {'bic', 'icl'}, default='bic'
+        criterion used for model selection. Default is `'bic'` but `'icl'`
+        can be used
+    d_select: {'cattell', 'bic', 'grid'}, default='cattell'
+        methods of selecting intrinsic dimensions of each group. Default
+        is `'cattell'`, but `'bic'` and `'grid'` can also be used.
+    init_vector: `list` of `ints`, default=None
+        vector containing user-supplied cluster initialization. Used
+        only when `init='vector'`
+    show: `bool`, default=True
+        use `show=False` to turn off the information displayed when the 
+        function finishes.
+    mini_nb: `list` of `ints`, default=[5,10]
+        list-like object of `ints` of length 2 used only when
+        `init='mini-em'`. First value gives the number of times the algorithm is
+        repeated, while the second gives the maximum iterations. This will give the
+        initialization that maximizes the log-likelihood.
+    min_individuals: `int`, default=4
+        sets the minimum allowed population of a class. If a
+        class contains less than the value of min_indivudals, then that run of the
+        algorithm is terminated and the string `"pop<min_indiv"` is returned as the
+        result of that combination of parameters.
+    mc_cores: `int`, default=1
+        number of CPU cores to use when using multi-processing. Information
+        on algorithm run-time cannot be shown when using this.
+    nb_rep: `int`, default=2
+        number of times each combination of parameters will be run
+    keepAllRes: `bool`, default=False
+        returns results from each algorithm run
+    kmeans_control: `dict`, default={'n_init':1, 'max_iter':10, 'algorithm':'lloyd'}
+        parameters to be used with init='kmeans'. Must specify
+        `'n_init'`, `'max_iter'`, and `'algorithm'`. Uses `scikit-learn's` 
+        `kmeans` function.
+    d_max: `float`, default=100
+        maximum number of intrinsic dimensions that can be computed. May
+        speed up algorithm if intrinsic dimensions are signifcantly large.
+    d-range: `int` or `list` of `ints`, default=2
+        list of values to be used for the intrinsic dimension of each
+        group when `d_select='grid'`.
+    verbose: bool, default=True
+        setting to `True` (default) will display run-time estimation as the
+        program exectutes.
+    '''
+
     com_dim = None
     noise_ctrl = 1.e-8
 
@@ -383,7 +557,6 @@ def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50.
         for i in range(K):
             d_set[i] = int(mkt[f'd{i}'])
 
-        #TODO may need to modify this from R
         try:
             res = _T_funhddc_main1(fdobj=fdobj, wlist=Wlist, K=K, dfstart=dfstart, dfupdate=dfupdate, dfconstr=dfconstr,
                                     itermax=itermax, model=model, threshold=threshold,
@@ -440,7 +613,6 @@ def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50.
                 params = [(fdobj, Wlist, Ks[i], dfstart, dfupdate, dfconstr, models[i], itermax, thresholds[i], d_select, eps, init, init_vector, mini_nb, min_individuals, noise_ctrl, com_dim, kmeans_control, d_max, d_sets[i], known) for i in range(len(models))]
                 res = p.starmap_async(_T_funhddc_main1, params).get()
 
-        #TODO add descriptive text here explaining that this is an unknown error
         except Exception as e:
             raise Exception("An error occurred while trying to use parallel. Try with mc_cores = 1 and try again").with_traceback(e.__traceback__)
 
@@ -455,7 +627,7 @@ def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50.
     if np.all(np.invert(np.isfinite(loglik_all))):
         warnings.warn("All models diverged")
 
-        #TODO do we need to add allcriteria here?
+        #do we need to add allcriteria here?
 
         return {'model': model, 'K': K, 'threshold':threshold, 'LL':loglik_all, 'BIC': None, 'comment': comment_all}
 
@@ -527,8 +699,6 @@ def tfunHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, dfstart=50.
         bestCritRes.allRes=allRes
     #allresults goes here. Do we need it?
 
-    #R assigns threshold here. Does it not already get assigned during main1?
-
     return bestCritRes
 
 #TODO add default values
@@ -537,8 +707,7 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
                      mini_nb, min_individuals, noise_ctrl, com_dim,
                      kmeans_control, d_max, d_set, known):
     modelNames = ["AKJBKQKDK", "AKBKQKDK", "ABKQKDK", "AKJBQKDK", "AKBQKDK", 
-                  "ABQKDK", "AKJBKQKD", "AKBKQKD", "ABKQKD", "AKJBQKD",
-                  "AKBQKD", "ABQKD"]
+                  "ABQKDK"]
     #Univariate
     if(type(fdobj) == skfda.FDataBasis):
         data = fdobj.coefficients
@@ -699,7 +868,6 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
                         elif prms_best.loglik < prms.loglik:
                             prms_best = prms
 
-                #TODO figure out better way to signal that mini-em didn't converge
                 if not isinstance(prms, TFunHDDC):
                     return "mini-em did not converge"
                 
@@ -769,7 +937,6 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
                         matchtab.data[ik] = np.repeat(-1, K)
 
                     matchit[np.nonzero(matchit == -1)[0]] = np.nonzero(np.invert(np.isin(np.arange(K), np.unique(matchit))))[0]
-                    #TODO pass by reference may not let this work correctly
                     knew = cluster.copy()
                     for i in range(0, K):
                         knew[cluster == i] = matchit[i]
@@ -1027,7 +1194,6 @@ def _T_initmypca_fd1(fdobj, Wlist, Ti):
 
         
         valeurs_propres, vecteurs_propres = scil.eig(cov)
-        #TODO This may make the program slower: see if not needed
         #indices = valeurs_propres.argsort()
         #valeurs_propres = valeurs_propres[indices[::-1]]
         #vecteurs_propres = vecteurs_propres[indices[::-1]]
@@ -1281,7 +1447,7 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
         if MULTI:
             valeurs_propres, cov, U = _T_mypcat_fd1_Multi(data, Wlist['W_m'], np.atleast_2d(t[:,i]), np.atleast_2d(corX[:,i]))
         else:
-            valeurs_propres, cov, U = _T_mypcat_fd1_Uni(data, Wlist['W_m'], np.atleast_2d(t[:,i]), np.atleast_2d(corX[:,i]))
+            valeurs_propres, cov, U = _T_mypcat_fd1_Uni(x, Wlist['W_m'], np.atleast_2d(t[:,i]), np.atleast_2d(corX[:,i]))
         traceVect[i] = np.sum(np.diag(valeurs_propres))
         ev[i] = valeurs_propres
         Q[f'{i}'] = U
@@ -1298,7 +1464,6 @@ def _T_funhddt_m_step1(fdobj, Wlist, K, t, tw, nux, dfupdate, dfconstr, model,
 
     Q1 = Q.copy()
     for i in range(0, K):
-        # verify that in R, matrix(Q[[i]]... ) just constructs a matrix with same dimenstions as Q[[i]]...
         Q[f'{i}'] = Q[f'{i}'][:,0:d[i]]
 
     #Parameter a
@@ -1441,12 +1606,16 @@ def _T_mypcat_fd1_Uni(data, W_m, Ti, corI):
     M = np.repeat(1., n).reshape((n, 1))@(v)
     rep = (M * data.T).T
     mat_cov = (rep.T@rep) / np.sum(Ti)
-    cov = (W_m@ mat_cov)@(W_m.T)
+    cov = ((W_m@ mat_cov)@(W_m.T))
     if not np.all(np.abs(cov-cov.T) < 1.e-12):
         ind = np.nonzero(cov - cov.T > 1.e-12)
         for i in ind:
             cov[i] = cov.T[i]
-    valeurs_propres, vecteurs_propres = np.linalg.eig(cov)
+    
+    valeurs_propres, vecteurs_propres = np.linalg.eig(cov.astype(complex128))
+    for i in range(len(valeurs_propres)):
+        if np.imag(i) > 0:
+            valeurs_propres[i] = 0
     bj = np.linalg.solve(W_m, np.eye(W_m.shape[0]))@np.real(vecteurs_propres)
     return np.real(valeurs_propres), cov, bj
 
@@ -1486,7 +1655,10 @@ def _T_mypcat_fd1_Multi(data, W_m, Ti, corI):
         for i in ind:
             cov[i] = cov.T[i]
 
-    valeurs_propres, vecteurs_propres = np.linalg.eig(cov)
+    valeurs_propres, vecteurs_propres = np.linalg.eig(cov.astype(complex128))
+    for i in range(len(valeurs_propres)):
+        if np.imag(i) > 0:
+            valeurs_propres[i] = 0
     bj = np.linalg.solve(W_m, np.eye(W_m.shape[0]))@np.real(vecteurs_propres)
 
     return np.real(valeurs_propres), cov, bj
