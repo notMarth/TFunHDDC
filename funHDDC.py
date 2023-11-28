@@ -403,6 +403,9 @@ def _funhddc_main1(fdobj, wlist, K, model,
                      kmeans_control, d_max, d_set, known, *args):
     modelNames = ["AKJBKQKDK", "AKBKQKDK", "ABKQKDK", "AKJBQKDK", "AKBQKDK", 
                   "ABQKDK"]
+    
+    np.seterr(all='ignore')
+
     #Univariate
     if(type(fdobj) == skfda.FDataBasis):
         data = fdobj.coefficients
@@ -857,6 +860,7 @@ def _funhddt_m_step1(fdobj, Wlist, K, t, model,threshold, method, noise_ctrl, co
 
     #Univariate Case    
     if(type(fdobj) == skfda.FDataBasis):
+        MULTI = False
         x = fdobj.coefficients
         data = fdobj.coefficients
 
