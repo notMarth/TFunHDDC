@@ -979,7 +979,7 @@ def _mypcat_fd1_Uni(data, W_m, Ti):
     for i in range(len(valeurs_propres)):
         if np.imag(i) > 0:
             valeurs_propres[i] = 0
-    bj = np.linalg.solve(W_m, np.eye(W_m.shape[0]))@np.real(vecteurs_propres)
+    bj = np.linalg.solve(W_m, np.eye(W_m.shape[0]))@np.ascontiguousarray(np.real(vecteurs_propres))
 
     return np.real(valeurs_propres), cov, bj
 
@@ -1014,7 +1014,7 @@ def _mypcat_fd1_Multi(data, W_m, Ti):
     for i in range(len(valeurs_propres)):
         if np.imag(i) > 0:
             valeurs_propres[i] = 0
-    bj = np.linalg.solve(W_m, np.eye(W_m.shape[0]))@np.real(vecteurs_propres)
+    bj = np.linalg.solve(W_m, np.eye(W_m.shape[0]))@np.ascontiguousarray(np.real(vecteurs_propres))
 
     return np.real(valeurs_propres), cov, bj
 

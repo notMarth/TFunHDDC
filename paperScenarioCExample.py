@@ -9,9 +9,8 @@ from sklearn import metrics as met
 '''
 This runs the examples from the paper for which TFunHDDC is based on.
 
-300 curves are simulated with 35 splines for the basis functions. There are 3
-scenarios that will be run: scenario A runs with eta = 100, 70, 170 for groups 1,
-2, and 3.
+300 curves are simulated with 35 splines for the basis functions. Scenario C 
+runs with eta = 100, 70, 170 for groups 1, 2, and 3.
 
 TFunHDDC is run first, then funHDDC. The ARI and the table for the the clustered
 data are printed.
