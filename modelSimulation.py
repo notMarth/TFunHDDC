@@ -95,8 +95,7 @@ def genModelFD(ncurves=1000, nsplines=35, alpha=[0.9,0.9,0.9], eta=[10,5,15]):
 
     return {'data': fd.to_basis(basis), 'labels': coef['cl']}
 
-if __name__ == '__main__':
-    fdt = genModelFD(nsplines=35, alpha=[1,1,1], eta=[0,0,0])
-    print(fdt['labels'])
-    fdt['data'].plot(group=fdt['labels'], group_colors=['red', 'blue', 'green'])
+
+def plotModelFD(fd):
+    fd['data'].plot(group=fd['labels'], group_colors=['red', 'blue', 'green'])
     plt.show()
