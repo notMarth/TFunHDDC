@@ -1,9 +1,18 @@
 import sys
 sys.path.append('.')
 import tfunHDDC as tfun
-import numpy as np
 import triangleSimulation as tri
 from sklearn import metrics as met
+
+'''
+Multivariate example using an example from the paper which TFunHDDC is based on.
+Each model is run separately, as the log likelihood may prefer a clustering with
+a higher CCR but lower ARI.
+
+After each model is run, the ARI and a table comparing the clustered classes vs
+the true labels are outputted.
+
+'''
 
 
 if __name__ == '__main__':

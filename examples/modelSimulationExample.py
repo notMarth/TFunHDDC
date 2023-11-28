@@ -5,6 +5,21 @@ import numpy as np
 import modelSimulation as sim
 from sklearn import metrics as met
 
+'''
+Simple example using a simulated model using Fourier Basis.
+We run each model separately as the log likelihood may prefer a clustering with
+a higher CCR but lower ARI depending on the model.
+
+The first run (Sim Data Clustering) clusters all the data and outputs the CCR, ARI, and the table of
+true labels against the clustered ones.
+
+The second run (Sim Data Classification and Prediction) splits the data into a training and testing set. We run the 
+training set in the same way as above, and then predict on the training set.
+For both of these, we check the CCR, ARI, and the table of clustered classes vs
+the true labels like above.
+
+'''
+
 if __name__ == '__main__':
     models = ['akjbkqkdk', 'akjbqkdk', 'akbkqkdk', 'akbqkdk', 'abkqkdk', 'abqkdk']
     print("Sim Data Clustering:")

@@ -706,6 +706,8 @@ def _T_funhddc_main1(fdobj, wlist, K, dfstart, dfupdate, dfconstr, model,
                      itermax, threshold, method, eps, init, init_vector,
                      mini_nb, min_individuals, noise_ctrl, com_dim,
                      kmeans_control, d_max, d_set, known):
+    
+    np.seterr(all='ignore')
     modelNames = ["AKJBKQKDK", "AKBKQKDK", "ABKQKDK", "AKJBQKDK", "AKBQKDK", 
                   "ABQKDK"]
     #Univariate
