@@ -10,8 +10,7 @@ This runs the examples from the paper for which TFunHDDC is based on.
 
 300 curves are simulated with 35 splines for the basis functions. There are 3
 scenarios that will be run: scenario A runs with eta = 10, 7, 17 for groups 1,
-2, and 3, scenario B runs with eta = 5, 50, 15 for groups 1, 2, and 3, and 
-scenario C runs with eta = 100, 70, 170 for groups 1, 2, and 3.
+2, and 3.
 
 For each scenario, the CCR and the ARI for each resulting run is printed,
 alongside the table of classified data against its true label.
@@ -23,9 +22,6 @@ can check each output.
 
 
 if __name__ == '__main__':
-
-
-
     print("Scenario A")
     data = sim.genModelFD(ncurves=300, nsplines=35, alpha=[0.9,0.9, 0.9], eta=[10,7,17])
     labels = data['labels']
@@ -34,24 +30,3 @@ if __name__ == '__main__':
     print(np.sum(np.diag(met.confusion_matrix(res.cl, labels)))/len(labels))
     print(met.confusion_matrix(res.cl, labels))          
     print(tfun._T_hddc_ari(labels, res.cl))
-
-        
-    print("\nScenario B")
-    data = sim.genModelFD(ncurves=300, nsplines=35, alpha=[0.9,0.9, 0.9], eta=[5,50,15])
-    labels = data['labels']
-
-    
-    res = tfun.tfunHDDC(data['data'], min_individuals=4, model='all', K=3, threshold=0.2, nb_rep=50, init='kmeans')
-    print(np.sum(np.diag(met.confusion_matrix(res.cl, labels)))/len(labels))
-    print(met.confusion_matrix(res.cl, labels))          
-    print(tfun._T_hddc_ari(labels, res.cl))
-
-    print("\nScenario C")
-    data = sim.genModelFD(ncurves=300, nsplines=35, alpha=[0.9,0.9, 0.9], eta=[100,70,170])
-    labels = data['labels']
-    results = {}
-    res = tfun.tfunHDDC(data['data'], min_individuals=4, model='all', K=3, threshold=0.2, nb_rep=50, init='kmeans')
-    print(np.sum(np.diag(met.confusion_matrix(res.cl, labels)))/len(labels))
-    print(met.confusion_matrix(res.cl, labels))          
-    print(tfun._T_hddc_ari(labels, res.cl))
-        
