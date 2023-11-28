@@ -29,4 +29,4 @@ def funHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, threshold=0.
 Instead of a `TFunHDDC` object, `funHDDC` returns a `FunHDDC` object. Note that prediction cannot be done with FunHDDC.
 
 # Examples
-See examples folder for usage examples
+See examples in project folder for usage examples
