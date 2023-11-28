@@ -21,6 +21,6 @@ if __name__ == '__main__':
 
     tri.plotTriangles(data)
 
-    res = tfun.tfunHDDC(fd, K=6, model='all', threshold=0.2, nb_rep=20)
+    res = tfun.tfunHDDC(fd, K=4, model='all', threshold=0.2, nb_rep=5)
     print(met.confusion_matrix(labels, res.cl))
     print(tfun._T_hddc_ari(labels, res.cl))

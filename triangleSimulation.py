@@ -106,16 +106,17 @@ def genTriangleScenario1():
     fdt = [fd1, fd2]
     
     target = np.concatenate((np.repeat(0, 80), np.repeat(4, 20), np.repeat(1, 100), np.repeat(2, 80), np.repeat(5, 20), np.repeat(3, 100)))
-    return {'data': fdt, 'labels': target}
+    target1 = np.concatenate((np.repeat(0, 80), np.repeat(0, 20), np.repeat(1, 100), np.repeat(2, 80), np.repeat(2, 20), np.repeat(3, 100)))
+    return {'data': fdt, 'labels': target1, 'labels with outliers': target}
     
 def plotTriangles(fdt):
     CL = ["black", "red", "green", "blue", "purple", "brown"]
 
-    fig1 = fdt['data'][0].plot(group = fdt['target'], group_colors = CL, linestyle="--")
+    fig1 = fdt['data'][0].plot(group = fdt['labels with outliers'], group_colors = CL, linestyle="--")
     plt.xlabel("t")
     plt.ylabel("x1(t)")
 
-    fig2 = fdt['data'][1].plot(group = fdt['target'], group_colors = CL, linestyle = '--')   
+    fig2 = fdt['data'][1].plot(group = fdt['labels with outliers'], group_colors = CL, linestyle = '--')   
     plt.xlabel("t")
     plt.ylabel("x2(t)")
 
