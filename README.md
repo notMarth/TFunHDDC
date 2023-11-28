@@ -29,4 +29,22 @@ def funHDDC(data, K=np.arange(1,11), model='AKJBKQKDK', known=None, threshold=0.
 Instead of a `TFunHDDC` object, `funHDDC` returns a `FunHDDC` object. Note that prediction cannot be done with FunHDDC.
 
 # Examples
-See examples in project folder for usage examples
+There are various examples provided to illustrate how to use TFunHDDC and funHDDC. The paper scenario examples run examples taken from the paper from which TFunHDDC is based on (Anton, C., Smith, I. Model-based clustering of functional data via mixtures of t distributions. Adv Data Anal Classif (2023). https://doi.org/10.1007/s11634-023-00542-w)
+
+paperScenarioAExample.py:
+300 curves are simulated with 35 splines for the basis functions. There are 3
+scenarios that will be run: scenario A runs with eta = 10, 7, 17 for groups 1,
+2, and 3.
+
+paperScenarioBExample.py:
+300 curves are simulated with 35 splines for the basis functions. There are 3
+scenarios that will be run: scenario A runs with eta = 5, 50, 15 for groups 1,
+2, and 3.
+
+paperScenarioCExample.py:
+300 curves are simulated with 35 splines for the basis functions. There are 3
+scenarios that will be run: scenario A runs with eta = 100, 70, 170 for groups 1,
+2, and 3.
+
+triangleSimulationMultivariateExample.py:
+multivariate example taken from the paper from which TFunHDDC is adapted from.
