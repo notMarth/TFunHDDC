@@ -27,7 +27,7 @@ if __name__ == '__main__':
     sim.plotModelFD(data)
 
     res = tfun.tfunHDDC(data['data'], model='all', K=3, threshold=0.2, nb_rep=5, init='kmeans')
-    res1 = fun.funHDDC(data['data'], model='all', K=3, threshold=0.05, nb_rep=5, init='kmeans')
+    res1 = fun.funHDDC(data['data'], model='all', K=3, threshold=0.2, nb_rep=5, init='kmeans')
 
     print("Results for TFunHDDC:")
     print(met.confusion_matrix(res.cl, labels))          
