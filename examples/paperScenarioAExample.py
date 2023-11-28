@@ -27,7 +27,6 @@ if __name__ == '__main__':
     sim.plotModelFD(data)
 
     res = tfun.tfunHDDC(data['data'], min_individuals=4, model='all', K=3, threshold=0.2, nb_rep=50, init='kmeans')
-    print(np.sum(np.diag(met.confusion_matrix(res.cl, labels)))/len(labels))
     print(met.confusion_matrix(res.cl, labels))          
     print(tfun._T_hddc_ari(labels, res.cl))
 
